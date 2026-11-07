@@ -218,3 +218,19 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# LH2: local data, solver outputs, model artifacts and secrets
+data/
+outputs/
+.local_deps/
+.mplconfig/
+.env.*
+*.pem
+*.key
+*.pt
+*.pth
+*.h5
+*.hdf5
+*.joblib
+*.pkl
+*.pickle
