@@ -8,7 +8,7 @@
 - 정답 없는 `cases_10k.csv`는 학습에 사용하지 않으며 예측으로 정답을 채우지 않는다.
 - 실제 튜닝 횟수와 결과를 그대로 보고한다. 대리모델 Pareto는 솔버 검증 결과가 아니다. 수렴 경고를 숨기지 않는다.
 - 작업마다 테스트를 추가하거나 갱신하고 전체 unittest를 실행한다. 에이전트는 git add/commit을 실행하지 않으며, 완료 보고에서 한국어 커밋 메시지만 제안한다. 커밋은 사용자가 직접 수행한다.
-- `docs/codex_tasks.md`의 우선순위를 따른다. 현재 요청은 native BLAS 3000/2000행 비용 측정과 full10k 실행 계획 재고정 후 멈추고 보고하는 것이다. finalize는 실행하지 않는다.
+- `docs/codex_tasks.md`의 우선순위를 따른다. 현재 요청은 무인 실행/재개 스크립트와 요약 산출물 준비 후 파일럿 데이터로 outputs/dryrun_full10k의 quick 전체 실행을 한 번 확인하는 것이다. 이번 확인 실행의 finalize 1회는 사용자가 명시적으로 승인했으며 재시도하지 않는다.
 
 ## 실행 명령
 
@@ -27,3 +27,5 @@ python optimize.py compare --points outputs/opt_pilot/verification_points.csv --
 사용자 승인 예외: cases_10k.csv는 benchmark_gpr.py 및 benchmark_native_gpr.py의 시간·메모리 측정에만 사용할 수 있다. 합성 y는 메모리 안에서만 만들고, 정답을 채우거나 학습 모델을 저장하지 않는다. 수력 보정 비교도 개발 자료만 사용하며 파일럿 테스트셋은 열지 않는다.
 
 full10k 실행 변경은 2026-11-09 비용 근거 revision이며 solver 성능/파일럿 테스트 결과에 따른 변경이 아니다. GPR 후보는 6개 전수 탐색, 다른 튜닝 모델은 선택 budget을 적용하고 실제 후보 수를 기록한다. 병렬 worker는 메모리 예약과 CPU/BLAS 한도를 초과하지 않도록 제한한다.
+
+F2 학습 곡선은 사용자가 확인한 대로 개발 자료의 고정 검증 RMSE로 표시한다. 최종 홀드아웃은 finalize 1회 평가와 저장된 예측을 읽는 F1에만 사용한다. 무인 실행에서 finalize 시작 기록이 있으면 실패/중단 여부와 무관하게 다시 실행하지 않는다.

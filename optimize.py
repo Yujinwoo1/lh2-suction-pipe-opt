@@ -8,6 +8,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from lh2_pipeline import ROOT, SEED, FEATURES, BOUNDS, TARGETS, rigid_pressure, plt, save_json
+from artifact_state import write_receipt
 from predict import validate_inputs
 from hydraulics import load_ratio_model, predicted_ratio
 from sklearn.gaussian_process import GaussianProcessRegressor
@@ -185,6 +186,7 @@ def run(models_dir, scenarios_path, out, hyd_model=None):
     fig.tight_layout()
     fig.savefig(out/'F4.png', dpi=300, facecolor='white')
     plt.close(fig)
+    write_receipt(out,'optimization_complete.json',{'hyd_model':models.hyd_mode})
     print(f'{NOTE}\nVerification rows: {len(verification)}; output: {out}')
 
 

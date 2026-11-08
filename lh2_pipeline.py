@@ -40,6 +40,7 @@ from development_tools import batched_predict, curve_plan, learning_rows, estima
 from execution_plan import resource_plan,candidate_parameters,walltime_decision,release_workers,reschedule_estimates
 from joblib import Parallel,delayed,parallel_config
 from threadpoolctl import threadpool_limits
+from artifact_state import atomic_json,write_receipt,sha256
 from ann_reference import load_ann_reference
 from hydraulics import hydraulic_cv, ratio_estimator, load_ratio_model, predicted_ratio, pressure_metrics
 
@@ -169,10 +170,24 @@ def metrics(y, pred):
 
 def _development_impl(data, out, quick=False, learning=False, physics_feature=None, *,
                 config=None, budget=None, cv_repeats=None, n_jobs=None,
-                gpr_max_rows=None, estimate_time=False, hyd_model=None, ann_ref_config=None,blas_threads=None):
+                gpr_max_rows=None, estimate_time=False, hyd_model=None, ann_ref_config=None,blas_threads=None,execution_plan=None):
     declared, cfg = settings(config, quick=quick, physics_feature=physics_feature,
                              budget=budget, cv_repeats=cv_repeats, n_jobs=n_jobs,
                              gpr_max_rows=gpr_max_rows, hyd_model=hyd_model,blas_threads=blas_threads)
+    accepted_plan=None
+    if execution_plan is not None:
+        if estimate_time or budget is not None or gpr_max_rows is not None:
+            raise ValueError('Saved execution plan cannot be combined with estimate/budget/row overrides.')
+        accepted_plan=json.loads(Path(execution_plan).read_text())
+        if (accepted_plan['data_sha256']!=sha256(data) or accepted_plan['config']!=declared
+                or accepted_plan['quick']!=quick or accepted_plan['learning_curves']!=learning):
+            raise ValueError('Saved execution plan does not match data/config/mode.')
+        effective=accepted_plan['effective_config']
+        if set(effective)!=set(cfg) or any(effective[k]!=cfg[k] for k in cfg if k not in ['budget','gpr_max_rows']):
+            raise ValueError('Execution plan runtime settings differ from this invocation.')
+        if accepted_plan.get('ann_ref_sha256') and accepted_plan['ann_ref_sha256']!=sha256(ann_ref_config or ROOT/'configs/ann_ref.json'):
+            raise ValueError('ANN reference configuration changed after estimate.')
+        _,cfg=settings({**declared,**effective})
     # Estimation is read-only, including when --out already contains a run.
     if not estimate_time and out.exists() and any(out.iterdir()):
         raise FileExistsError('Use a new empty output directory to preserve existing experiments.')
@@ -199,8 +214,8 @@ def _development_impl(data, out, quick=False, learning=False, physics_feature=No
     if needs_hyd_gpr:
         estimate_models['hyd_ratio']={'gpr':(ratio_estimator(cfg['gpr_max_rows']),{})}
         estimate_targets['hyd_ratio']=df.iloc[train].dp_hyd_Pa.to_numpy()/df.iloc[train].dp_rigid_Pa.to_numpy()
-    decision={'applied_budget':cfg['budget'], 'reason':'Explicit CLI override' if budget is not None else 'Quick smoke settings' if quick else 'Configured fixed budget'}
-    if estimate_time or (declared.get('budget_rule') and not quick and budget is None):
+    decision=accepted_plan['budget_decision'] if accepted_plan else {'applied_budget':cfg['budget'], 'reason':'Explicit CLI override' if budget is not None else 'Quick smoke settings' if quick else 'Configured fixed budget'}
+    if accepted_plan is None and (estimate_time or (declared.get('budget_rule') and not quick and budget is None)):
         estimate=estimate_runtime(estimate_models,X,estimate_targets,folds,cfg,learning=learning,labels=labels)
         if declared.get('budget_rule') and budget is None and not quick:
             rule=declared['budget_rule']
@@ -225,6 +240,7 @@ def _development_impl(data, out, quick=False, learning=False, physics_feature=No
         print('Budget decision: '+json.dumps(decision,ensure_ascii=False),flush=True)
         if estimate_time:
             estimate.attrs['budget_decision']=decision
+            estimate.attrs['effective_config']=cfg
             return estimate
     out.mkdir(parents=True, exist_ok=True)
     audit(df, out)
@@ -234,6 +250,7 @@ def _development_impl(data, out, quick=False, learning=False, physics_feature=No
     manifest = {'seed': SEED, 'data_sha256': hashlib.sha256(Path(data).read_bytes()).hexdigest(),
         'config': declared, 'effective_config': cfg, 'budget_decision': decision,
         'execution_revision':declared.get('execution_revision'), 'resource_plans':[],
+        'saved_execution_plan_sha256':sha256(execution_plan) if execution_plan else None,
         'hyd_model':cfg['hyd_model'], 'ann_ref':{'config':ann_spec,'note':ann_note},
         'features': FEATURES, 'physics_feature': cfg['physics_feature'],
         'derived_features': [PHYSICS_FEATURE_NAME] if cfg['physics_feature'] else [],
@@ -292,9 +309,11 @@ def _development_impl(data, out, quick=False, learning=False, physics_feature=No
             refit_plan=resource_plan(cfg,max_tasks=1)
             manifest['resource_plans'].append({'target':target,'model':name,'stage':'refit',**refit_plan})
             best=clone(est).set_params(**search.best_params_)
+            refit_started=time.perf_counter()
             with warnings.catch_warnings(record=True) as refit_warnings:
                 warnings.simplefilter('always')
                 best.fit(X,y)
+            refit_seconds=time.perf_counter()-refit_started
             captured.extend(refit_warnings)
             elapsed = time.perf_counter()-start
             manifest['warnings'].extend(sorted({f'{target}/{name}: {w.message}' for w in captured}))
@@ -303,7 +322,7 @@ def _development_impl(data, out, quick=False, learning=False, physics_feature=No
             pd.DataFrame(search.cv_results_).to_csv(out/(key+'__search.csv'), index=False)
             manifest['models'][key] = {'parameters': search.best_params_, 'tuning_seconds': 0.0 if name in ['physics_baseline','ann_ref'] else elapsed,
                 'tuning_candidates': 0 if not space else len(sampled),
-                'evaluation_seconds': elapsed,
+                'evaluation_seconds': elapsed,'refit_seconds':refit_seconds,
                 'fit_rows': len(best.sample_indices_) if hasattr(best,'sample_indices_') else len(X),
                 'note': 'Fixed P0-2 formula; no tuning or learned parameters.' if name == 'physics_baseline' else ann_note if name=='ann_ref' else 'Development CV only.'}
             row_start = len(all_folds)
@@ -331,7 +350,7 @@ def _development_impl(data, out, quick=False, learning=False, physics_feature=No
                 timing.append(time.perf_counter()-t)
             summary = {'target': target, 'model': name, 'actual_candidates':len(sampled) if space else 0,
                 'tuning_seconds': 0.0 if name in ['physics_baseline','ann_ref'] else elapsed,
-                'predict_10k_seconds_median': float(np.median(timing))}
+                'predict_10k_seconds_median': float(np.median(timing)), 'final_refit_seconds':refit_seconds}
             for metric in ['r2', 'rmse', 'mape_pct', 'log10_rmse', 'log10_r2', 'fit_seconds']:
                 summary[metric+'_mean'] = group[metric].mean()
                 summary[metric+'_std'] = group[metric].std(ddof=1)
@@ -370,7 +389,8 @@ def _development_impl(data, out, quick=False, learning=False, physics_feature=No
             ax.set(xscale='log', yscale='log', xlabel='Training samples', ylabel='Validation RMSE ('+('W' if target == 'Q_leak_W' else 'Pa')+')')
             ax.legend(fontsize=8); fig.tight_layout(); fig.savefig(out/(target+'__learning.png'), dpi=300); plt.close(fig)
     manifest['warnings'] = sorted(set(manifest['warnings']))
-    save_json(out/'manifest.json', manifest)
+    atomic_json(out/'manifest.json', manifest)
+    write_receipt(out,'development_complete.json',{'data_sha256':manifest['data_sha256']})
     print('Development complete. Selected models:', manifest['selected'], flush=True)
     return manifest
 
@@ -378,7 +398,7 @@ def _development_impl(data, out, quick=False, learning=False, physics_feature=No
 
 def development(data,out,quick=False,learning=False,physics_feature=None,*,
                 config=None,budget=None,cv_repeats=None,n_jobs=None,gpr_max_rows=None,
-                estimate_time=False,hyd_model=None,ann_ref_config=None,blas_threads=None):
+                estimate_time=False,hyd_model=None,ann_ref_config=None,blas_threads=None,execution_plan=None):
     _,cfg=settings(config,quick=quick,physics_feature=physics_feature,budget=budget,
                    cv_repeats=cv_repeats,n_jobs=n_jobs,gpr_max_rows=gpr_max_rows,
                    hyd_model=hyd_model,blas_threads=blas_threads)
@@ -386,7 +406,7 @@ def development(data,out,quick=False,learning=False,physics_feature=None,*,
         return _development_impl(data,out,quick,learning,physics_feature,config=config,
             budget=budget,cv_repeats=cv_repeats,n_jobs=n_jobs,gpr_max_rows=gpr_max_rows,
             estimate_time=estimate_time,hyd_model=hyd_model,ann_ref_config=ann_ref_config,
-            blas_threads=blas_threads)
+            blas_threads=blas_threads,execution_plan=execution_plan)
 
 
 def validate_finalize_config(manifest, config):
@@ -406,7 +426,7 @@ def finalize(data, out, config=None):
     df = load_data(data)
     splits = pd.read_csv(out/'split.csv')
     test = df.set_index('case_id').loc[splits.loc[splits.split == 'test', 'case_id']].reset_index()
-    save_json(out/'final_evaluation_started.json', {'purpose': 'final holdout opened after model selection', 'selected': manifest['selected'],
+    atomic_json(out/'final_evaluation_started.json', {'purpose': 'final holdout opened after model selection', 'selected': manifest['selected'],
         'config': manifest.get('config', {}), 'effective_config': manifest.get('effective_config', {})})
     rows, preds = [], pd.DataFrame({'case_id': test.case_id})
     selected_predictions = {}
@@ -452,6 +472,9 @@ def finalize(data, out, config=None):
     pd.DataFrame(rows).to_csv(out/'final_test_metrics.csv', index=False)
     preds.to_csv(out/'final_test_predictions.csv', index=False)
     save_json(out/'final_pressure_metrics.json', report)
+    write_receipt(out,'finalization_complete.json',{'data_sha256':manifest['data_sha256']},
+                  files=[*out.glob('final_*.csv'),out/'final_pressure_metrics.json',
+                         out/'final_evaluation_started.json',*out.glob('*__parity.png')])
     print('Final test complete. Do not change models based on this holdout.', flush=True)
 
 
@@ -471,6 +494,7 @@ def main():
     parser.add_argument('--blas-threads',type=int)
     parser.add_argument('--gpr-max-rows', type=int)
     parser.add_argument('--estimate-time', action='store_true')
+    parser.add_argument('--execution-plan',type=Path)
     parser.add_argument('--hyd-model',choices=['const','gpr'])
     parser.add_argument('--ann-ref-config',type=Path)
     args = parser.parse_args()
@@ -479,10 +503,10 @@ def main():
         development(args.data, out, args.quick, args.learning_curves, args.physics_feature,
                     config=args.config, budget=args.budget, cv_repeats=args.cv_repeats,
                     n_jobs=args.n_jobs, gpr_max_rows=args.gpr_max_rows, estimate_time=args.estimate_time,
-                    hyd_model=args.hyd_model,ann_ref_config=args.ann_ref_config,blas_threads=args.blas_threads)
+                    hyd_model=args.hyd_model,ann_ref_config=args.ann_ref_config,blas_threads=args.blas_threads,execution_plan=args.execution_plan)
     else:
         if args.estimate_time or args.quick or args.learning_curves or any(value is not None for value in
-                [args.physics_feature, args.budget, args.cv_repeats, args.n_jobs, args.gpr_max_rows,args.hyd_model,args.ann_ref_config,args.blas_threads]):
+                [args.physics_feature, args.budget, args.cv_repeats, args.n_jobs, args.gpr_max_rows,args.hyd_model,args.ann_ref_config,args.blas_threads,args.execution_plan]):
             parser.error('finalize uses saved effective settings; only --config, --data and --out are accepted.')
         finalize(args.data, out, config=args.config)
 
