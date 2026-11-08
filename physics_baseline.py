@@ -1,6 +1,6 @@
 """Fixed heat-leak reference from docs/codex_tasks.md P0-2."""
 import numpy as np
-from sklearn.base import BaseEstimator, RegressorMixin
+from sklearn.base import BaseEstimator, RegressorMixin, TransformerMixin
 
 
 def physics_heat_leak(df):
@@ -27,3 +27,30 @@ class PhysicsBaseline(RegressorMixin, BaseEstimator):
 
     def predict(self, X):
         return physics_heat_leak(X)
+
+
+PHYSICS_FEATURE_NAME = 'log10_Q_phys_per_mdot'
+
+
+class PhysicsFeatureTransformer(TransformerMixin, BaseEstimator):
+    """Append log10(Q_phys / mdot_kg_h) using only the six source features.
+
+    Stateless: no target or fitted constants are used. Selecting source columns
+    also prevents any supplied target/ID/derived columns from entering models.
+    """
+    def __init__(self, features):
+        self.features = features
+
+    def fit(self, X, y=None):
+        self.n_features_in_ = len(self.features)
+        self.feature_names_in_ = np.asarray(self.features, dtype=object)
+        return self
+
+    def transform(self, X):
+        data = X.loc[:, list(self.features)].copy()
+        data[PHYSICS_FEATURE_NAME] = np.log10(
+            physics_heat_leak(data)/data['mdot_kg_h'].to_numpy(dtype=float))
+        return data
+
+    def get_feature_names_out(self, input_features=None):
+        return np.asarray([*self.features, PHYSICS_FEATURE_NAME], dtype=object)

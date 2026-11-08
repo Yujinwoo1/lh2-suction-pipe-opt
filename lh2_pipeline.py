@@ -21,7 +21,8 @@ import joblib
 import sklearn
 from scipy.special import exp10
 from sklearn.base import clone
-from physics_baseline import PhysicsBaseline, physics_heat_leak
+from physics_baseline import (PhysicsBaseline, physics_heat_leak,
+                              PhysicsFeatureTransformer, PHYSICS_FEATURE_NAME)
 from sklearn.compose import TransformedTargetRegressor
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.gaussian_process import GaussianProcessRegressor
@@ -97,9 +98,12 @@ def audit(df, out):
         'hydraulic_only_constraint_mismatches': int(rows.constraint_mismatch.sum())})
 
 
-def candidates(quick=False, target=None):
+def candidates(quick=False, target=None, physics_feature=False):
     def wrapped(steps):
+        if physics_feature:
+            steps = [('physics_feature', PhysicsFeatureTransformer(tuple(FEATURES))), *steps]
         return TransformedTargetRegressor(regressor=Pipeline(steps), func=np.log10, inverse_func=exp10)
+    dimensions = len(FEATURES) + int(physics_feature)
     prefix = 'regressor__model__'
     models = {
         'linear': (wrapped([('scale', StandardScaler()), ('model', LinearRegression())]), {}),
@@ -110,7 +114,7 @@ def candidates(quick=False, target=None):
             {prefix+'n_estimators': [80, 150] if quick else [150, 300], prefix+'max_depth': [None, 8, 16], prefix+'min_samples_leaf': [1, 2, 4]}),
         'gpr': (wrapped([('scale', StandardScaler()), ('model', GaussianProcessRegressor(normalize_y=True, random_state=SEED))]),
             {prefix+'kernel': [ConstantKernel(1, (1e-3, 1e3))*k+WhiteKernel(1e-5, (1e-9, 1e-1))
-                 for k in [RBF(np.ones(6)), Matern(np.ones(6), nu=1.5), Matern(np.ones(6), nu=2.5)]],
+                 for k in [RBF(np.ones(dimensions)), Matern(np.ones(dimensions), nu=1.5), Matern(np.ones(dimensions), nu=2.5)]],
              prefix+'alpha': [1e-10, 1e-7]}),
         'mlp': (wrapped([('scale', StandardScaler()), ('model', MLPRegressor(random_state=SEED,
                  max_iter=1000 if quick else 3000, early_stopping=True, validation_fraction=.2, n_iter_no_change=40))]),
@@ -139,7 +143,7 @@ def metrics(y, pred):
             'log10_r2': r2_score(np.log10(y), np.log10(pred))}
 
 
-def development(data, out, quick=False, learning=False):
+def development(data, out, quick=False, learning=False, physics_feature=False):
     out.mkdir(parents=True, exist_ok=True)
     if (out/'manifest.json').exists():
         raise FileExistsError('Use a new output directory to preserve the existing experiment.')
@@ -153,7 +157,10 @@ def development(data, out, quick=False, learning=False):
     np.savez(out/'cv_indices.npz', **{f'{i}_{part}': arr for i, pair in enumerate(folds) for part, arr in zip(['train', 'val'], pair)})
     budget = 2 if quick else 6
     manifest = {'seed': SEED, 'data_sha256': hashlib.sha256(Path(data).read_bytes()).hexdigest(),
-        'features': FEATURES, 'train_rows': len(train), 'test_rows': len(test), 'quick': quick,
+        'features': FEATURES, 'physics_feature': physics_feature,
+        'derived_features': [PHYSICS_FEATURE_NAME] if physics_feature else [],
+        'physics_feature_definition': 'log10(physics_heat_leak(X)/mdot_kg_h), fixed P0-2 formula, inside Pipeline' if physics_feature else None,
+        'train_rows': len(train), 'test_rows': len(test), 'quick': quick,
         'cv_folds': len(folds), 'tuning_candidates_per_tunable_model': budget,
         'selection_metric': 'minimum mean CV log10 RMSE, separately per target',
         'cv_note': 'CV used for tuning and selection; these are not unbiased generalization estimates. Final test is separate.',
@@ -162,7 +169,7 @@ def development(data, out, quick=False, learning=False):
     all_folds, summaries, lc_rows = [], [], []
     for target in TARGETS:
         y = df.iloc[train][target].to_numpy()
-        for name, (est, space) in candidates(quick, target=target).items():
+        for name, (est, space) in candidates(quick, target=target, physics_feature=physics_feature).items():
             print(f"{'Evaluating fixed formula' if name == 'physics_baseline' else 'Tuning'} {target}: {name}", flush=True)
             # GPR cap applies only to development data and is recorded explicitly.
             if name == 'gpr' and len(X) > 3000:
@@ -302,9 +309,11 @@ def main():
     parser.add_argument('--out', type=Path, default=ROOT/'outputs/pilot')
     parser.add_argument('--quick', action='store_true', help='Smoke run only: 3 folds, 2 candidate configurations.')
     parser.add_argument('--learning-curves', action='store_true')
+    parser.add_argument('--physics-feature', action='store_true',
+                        help='Append fixed log10(Q_phys/mdot_kg_h) inside each learned model Pipeline.')
     args = parser.parse_args()
     if args.stage == 'develop':
-        development(args.data, args.out, args.quick, args.learning_curves)
+        development(args.data, args.out, args.quick, args.learning_curves, args.physics_feature)
     else:
         finalize(args.data, args.out)
 

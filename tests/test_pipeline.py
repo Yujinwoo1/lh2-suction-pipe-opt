@@ -76,8 +76,8 @@ class PipelineTests(unittest.TestCase):
 
     def test_physics_development_uses_same_cv_validation_rows(self):
         original_candidates = p.candidates
-        def small_candidates(quick=False, target=None):
-            return {name: value for name, value in original_candidates(quick, target).items()
+        def small_candidates(quick=False, target=None, physics_feature=False):
+            return {name: value for name, value in original_candidates(quick, target, physics_feature).items()
                     if name in ['linear', 'physics_baseline']}
         with tempfile.TemporaryDirectory() as tmp, patch.object(p, 'candidates', side_effect=small_candidates):
             out = Path(tmp)

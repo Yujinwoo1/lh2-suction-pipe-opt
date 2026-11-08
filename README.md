@@ -106,3 +106,14 @@ python optimize.py compare --points outputs/opt_pilot/verification_points.csv --
 기존 `outputs/pilot`을 보존하고, Q_leak 비교에 `physics_baseline`을 추가합니다. 식과 상수는 `docs/codex_tasks.md` P0-2 그대로이며 튜닝하지 않습니다. 입력은 기존 FEATURES 6개이고 전도율은 `10**log10_k_MLI`로 복원합니다. 다른 모델과 동일한 개발/최종 테스트 분할 및 CV 검증 fold에서 평가합니다. 이 명령은 최종 홀드아웃 성능을 계산하지 않습니다.
 
 `cv_summary.csv`와 `cv_fold_metrics.csv`에 동일 지표로 기록하고, `data_audit.json`에는 전체 자료의 물리식 평균·최대 절대 상대오차(%)를 별도 저장합니다. 전체 200개 감사 수치와 개발 CV 수치를 혼합하지 않습니다. Q_leak는 이 파일럿에서 물리식으로 충분하며 AI 비교의 실질적인 초점은 dp_thermal입니다. 최종 일반화 성능은 아직 평가하지 않았습니다.
+
+## 물리 파생 특성 실험
+
+```bash
+.venv/bin/python lh2_pipeline.py develop --physics-feature --out outputs/pilot_v3
+.venv/bin/python optimize.py run --models outputs/pilot_v3
+```
+
+`--physics-feature`는 학습 모델의 Pipeline 첫 단계에서 원본 FEATURES 6개만 선택한 뒤 `log10(Q_phys/mdot_kg_h)`를 추가합니다. Q_phys는 `physics_baseline.py`의 고정식을 그대로 사용하며, 유량 단위는 kg/h입니다. 정답 열·ID·외부에서 채운 파생값은 사용하지 않습니다. 스케일러와 다항 변환은 이 단계 이후 각 학습 fold에서 fit합니다. GPR ARD 길이척도는 7개로 맞춥니다. 옵션이 없으면 기존 6입력 동작을 유지합니다.
+
+옵션은 두 출력의 학습 모델에 적용하며 고정 `physics_baseline`에는 적용하지 않습니다. 저장된 Pipeline이 파생값을 계산하므로 `predict.py`와 `optimize.py`에 별도 전처리나 옵션이 필요하지 않습니다. 최종 홀드아웃은 평가하지 않습니다. 실험의 상세 비교 기준과 결과는 `docs/PILOT.md`를 참고하세요.
