@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 from lh2_pipeline import ROOT, SEED, FEATURES, BOUNDS, TARGETS, rigid_pressure, plt, save_json
 from predict import validate_inputs
+from hydraulics import load_ratio_model, predicted_ratio
 from sklearn.gaussian_process import GaussianProcessRegressor
 
 OBJECTIVES = ['Q_leak_pred_W', 'dp_design_pred_Pa', 'D_o_mm']
@@ -19,18 +20,21 @@ NOTE = ('Surrogate Pareto only, not solver validation. B is minimum Euclidean '
 
 
 class CachedModels:
-    def __init__(self, directory):
+    def __init__(self, directory, hyd_model=None):
         directory = Path(directory)
         self.manifest = json.loads((directory/'manifest.json').read_text(encoding='utf-8'))
         self.models = {target: joblib.load(directory/(target+'__'+self.manifest['selected'][target]+'.joblib'))
                        for target in TARGETS}
+        self.hyd_mode,self.ratio_model=load_ratio_model(directory,self.manifest,hyd_model)
 
     def evaluate(self, frame):
         data = validate_inputs(frame)
         predictions = {target: [] for target in TARGETS}
         deviations = []
+        ratios = []
         for start in range(0, len(data), 1000):
             features = data[FEATURES].iloc[start:start+1000]
+            ratios.extend(predicted_ratio(self.ratio_model,features))
             for target, model in self.models.items():
                 predictions[target].extend(model.predict(features))
             thermal = self.models['dp_thermal_Pa'].regressor_
@@ -40,7 +44,9 @@ class CachedModels:
                 deviations.extend(np.full(len(features), np.nan))
         data['Q_leak_pred_W'] = predictions['Q_leak_W']
         data['dp_thermal_pred_Pa'] = predictions['dp_thermal_Pa']
-        data['dp_design_pred_Pa'] = data.dp_thermal_pred_Pa+1.8*rigid_pressure(data)
+        data['hydraulic_ratio_pred']=ratios
+        data['hyd_model']=self.hyd_mode
+        data['dp_design_pred_Pa'] = data.dp_thermal_pred_Pa+data.hydraulic_ratio_pred*rigid_pressure(data)
         data['D_o_mm'] = data.D_mm+3+2*data.t_ins_mm
         data['sigma_log10_dp_thermal'] = deviations
         data['n_star'] = 1040/(4*data.L_m*data.f_Hz)
@@ -112,7 +118,7 @@ def candidates(front):
     return result
 
 
-def run(models_dir, scenarios_path, out):
+def run(models_dir, scenarios_path, out, hyd_model=None):
     from pymoo.algorithms.moo.nsga2 import NSGA2
     from pymoo.optimize import minimize
     from pymoo.indicators.hv import HV
@@ -124,10 +130,10 @@ def run(models_dir, scenarios_path, out):
         if not scenario['id'].isalnum():
             raise ValueError('Scenario IDs must be alphanumeric.')
         design_frame([[12, 2], [50, 25]], scenario)
-    models = CachedModels(models_dir)
+    models = CachedModels(models_dir,hyd_model)
     out.mkdir(parents=True, exist_ok=False)
     save_json(out/'optimization.json', {'seed': SEED, 'population': 100, 'generations': 200,
-              'grid_shape': [200, 200], 'models': str(models_dir), 'selected': models.manifest['selected'],
+              'grid_shape': [200, 200], 'hyd_model':models.hyd_mode, 'models': str(models_dir), 'selected': models.manifest['selected'],
               'note': NOTE, 'scenarios': scenarios, 'hv_reference': [1.1]*3})
     points, summaries = [], []
     fig, axes = plt.subplots(1, len(scenarios), figsize=(6*len(scenarios), 5), squeeze=False)
@@ -212,13 +218,14 @@ def main():
     search.add_argument('--models', type=Path, default=ROOT/'outputs/pilot')
     search.add_argument('--scenarios', type=Path, default=ROOT/'configs/scenarios.json')
     search.add_argument('--out', type=Path)
+    search.add_argument('--hyd-model',choices=['const','gpr'])
     comparison = commands.add_parser('compare')
     comparison.add_argument('--points', type=Path, required=True)
     comparison.add_argument('--solver', type=Path, required=True)
     comparison.add_argument('--output', type=Path)
     args = parser.parse_args()
     if args.command == 'run':
-        run(args.models, args.scenarios, args.out or ROOT/'outputs'/('opt_'+args.models.resolve().name))
+        run(args.models, args.scenarios, args.out or ROOT/'outputs'/('opt_'+args.models.resolve().name),args.hyd_model)
     else:
         table = compare(args.points, args.solver, args.output or args.points.parent/'T4_comparison.csv')
         print(f'T4: {len(table)} rows; constraint agreement={table.constraint_agreement.mean():.3f}')

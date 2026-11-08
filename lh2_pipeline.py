@@ -35,8 +35,10 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler, PolynomialFeatures
 from sklearn.ensemble import RandomForestRegressor
 from training_support import (SubsampledTargetRegressor, sample_indices, sampled_parameters,
-                              read_config, settings)
+                              read_config, settings, budget_decision)
 from development_tools import batched_predict, curve_plan, learning_rows, estimate_runtime
+from ann_reference import load_ann_reference
+from hydraulics import hydraulic_cv, ratio_estimator, load_ratio_model, predicted_ratio, pressure_metrics
 
 SEED = 2026
 FEATURES = ['D_mm', 't_ins_mm', 'f_Hz', 'L_m', 'mdot_kg_h', 'log10_k_MLI']
@@ -164,10 +166,10 @@ def metrics(y, pred):
 
 def development(data, out, quick=False, learning=False, physics_feature=None, *,
                 config=None, budget=None, cv_repeats=None, n_jobs=None,
-                gpr_max_rows=None, estimate_time=False):
+                gpr_max_rows=None, estimate_time=False, hyd_model=None, ann_ref_config=None):
     declared, cfg = settings(config, quick=quick, physics_feature=physics_feature,
                              budget=budget, cv_repeats=cv_repeats, n_jobs=n_jobs,
-                             gpr_max_rows=gpr_max_rows)
+                             gpr_max_rows=gpr_max_rows, hyd_model=hyd_model)
     # Estimation is read-only, including when --out already contains a run.
     if not estimate_time and out.exists() and any(out.iterdir()):
         raise FileExistsError('Use a new empty output directory to preserve existing experiments.')
@@ -180,20 +182,38 @@ def development(data, out, quick=False, learning=False, physics_feature=None, *,
                                random_state=SEED).split(X))
     models_by_target = {target: candidates(quick, target=target,
                                           physics_feature=cfg['physics_feature']) for target in TARGETS}
+    ann_spec,ann_model,ann_note=load_ann_reference(ann_ref_config or ROOT/'configs/ann_ref.json')
+    print(ann_note,flush=True)
+    if ann_model is not None:
+        for models in models_by_target.values():
+            models['ann_ref']=(clone(ann_model),{})
     for models in models_by_target.values():
         if 'gpr' in models:
             models['gpr'][0].set_params(max_rows=cfg['gpr_max_rows'])
-    if estimate_time:
-        return estimate_runtime(models_by_target, X,
-                                {target: df.iloc[train][target].to_numpy() for target in TARGETS},
-                                folds, cfg, learning=learning, labels=labels)
+    needs_hyd_gpr=cfg['hyd_model']=='gpr' or 'gpr' in declared.get('finalize_pressure_comparisons',[])
+    estimate_models=dict(models_by_target)
+    estimate_targets={target: df.iloc[train][target].to_numpy() for target in TARGETS}
+    if needs_hyd_gpr:
+        estimate_models['hyd_ratio']={'gpr':(ratio_estimator(cfg['gpr_max_rows']),{})}
+        estimate_targets['hyd_ratio']=df.iloc[train].dp_hyd_Pa.to_numpy()/df.iloc[train].dp_rigid_Pa.to_numpy()
+    decision={'applied_budget':cfg['budget'], 'reason':'Explicit CLI override' if budget is not None else 'Quick smoke settings' if quick else 'Configured fixed budget'}
+    if estimate_time or (declared.get('budget_rule') and not quick and budget is None):
+        estimate=estimate_runtime(estimate_models,X,estimate_targets,folds,cfg,learning=learning,labels=labels)
+        if declared.get('budget_rule') and budget is None and not quick:
+            decision=budget_decision(estimate,declared['budget_rule'])
+            cfg['budget']=decision['applied_budget']
+        print('Budget decision: '+json.dumps(decision,ensure_ascii=False),flush=True)
+        if estimate_time:
+            estimate.attrs['budget_decision']=decision
+            return estimate
     out.mkdir(parents=True, exist_ok=True)
     audit(df, out)
     split = pd.DataFrame({'case_id': df.case_id, 'split': np.where(np.isin(np.arange(len(df)), test), 'test', 'development')})
     split.to_csv(out/'split.csv', index=False)
     np.savez(out/'cv_indices.npz', **{f'{i}_{part}': arr for i, pair in enumerate(folds) for part, arr in zip(['train', 'val'], pair)})
     manifest = {'seed': SEED, 'data_sha256': hashlib.sha256(Path(data).read_bytes()).hexdigest(),
-        'config': declared, 'effective_config': cfg,
+        'config': declared, 'effective_config': cfg, 'budget_decision': decision,
+        'hyd_model':cfg['hyd_model'], 'ann_ref':{'config':ann_spec,'note':ann_note},
         'features': FEATURES, 'physics_feature': cfg['physics_feature'],
         'derived_features': [PHYSICS_FEATURE_NAME] if cfg['physics_feature'] else [],
         'physics_feature_definition': 'log10(physics_heat_leak(X)/mdot_kg_h), fixed P0-2 formula, inside Pipeline' if cfg['physics_feature'] else None,
@@ -230,6 +250,7 @@ def development(data, out, quick=False, learning=False, physics_feature=None, *,
             'Requested n above the remaining pool is marked skipped; full pool is an extra measured point. '
             'Hyperparameters fixed by development CV; descriptive, not independent model-selection evidence.')
     all_folds, summaries, lc_rows = [], [], []
+    thermal_oof={}
     for target in TARGETS:
         y = df.iloc[train][target].to_numpy()
         for name, (est, space) in models_by_target[target].items():
@@ -248,12 +269,13 @@ def development(data, out, quick=False, learning=False, physics_feature=None, *,
             key = target+'__'+name
             joblib.dump(best, out/(key+'.joblib'))
             pd.DataFrame(search.cv_results_).to_csv(out/(key+'__search.csv'), index=False)
-            manifest['models'][key] = {'parameters': search.best_params_, 'tuning_seconds': 0.0 if name == 'physics_baseline' else elapsed,
+            manifest['models'][key] = {'parameters': search.best_params_, 'tuning_seconds': 0.0 if name in ['physics_baseline','ann_ref'] else elapsed,
                 'tuning_candidates': 0 if not space else len(sampled),
                 'evaluation_seconds': elapsed,
-                'fit_rows': len(best.sample_indices_) if name == 'gpr' else len(X),
-                'note': 'Fixed P0-2 formula; no tuning or learned parameters.' if name == 'physics_baseline' else 'Development CV only.'}
+                'fit_rows': len(best.sample_indices_) if hasattr(best,'sample_indices_') else len(X),
+                'note': 'Fixed P0-2 formula; no tuning or learned parameters.' if name == 'physics_baseline' else ann_note if name=='ann_ref' else 'Development CV only.'}
             row_start = len(all_folds)
+            if target=='dp_thermal_Pa': thermal_oof[name]=[]
             for fold, (a, b) in enumerate(folds):
                 fitted = clone(best)
                 t = time.perf_counter()
@@ -263,8 +285,9 @@ def development(data, out, quick=False, learning=False, physics_feature=None, *,
                 manifest['warnings'].extend(sorted({f'{target}/{name}/fold{fold}: {w.message}' for w in fold_warnings}))
                 fit_seconds = time.perf_counter()-t
                 pred = fitted.predict(X.iloc[b])
+                if target=='dp_thermal_Pa': thermal_oof[name].append(pred)
                 all_folds.append({'target': target, 'model': name, 'fold': fold,
-                    'fit_rows': len(fitted.sample_indices_) if name == 'gpr' else len(a),
+                    'fit_rows': len(fitted.sample_indices_) if hasattr(fitted,'sample_indices_') else len(a),
                     'validation_rows': len(b), 'fit_seconds': fit_seconds, **metrics(y[b], pred)})
             group = pd.DataFrame(all_folds[row_start:])
             timing_X = pd.concat([X]*int(np.ceil(10000/len(X))), ignore_index=True).iloc[:10000]
@@ -274,7 +297,7 @@ def development(data, out, quick=False, learning=False, physics_feature=None, *,
                 t = time.perf_counter()
                 batched_predict(best, timing_X)
                 timing.append(time.perf_counter()-t)
-            summary = {'target': target, 'model': name, 'tuning_seconds': 0.0 if name == 'physics_baseline' else elapsed,
+            summary = {'target': target, 'model': name, 'tuning_seconds': 0.0 if name in ['physics_baseline','ann_ref'] else elapsed,
                 'predict_10k_seconds_median': float(np.median(timing))}
             for metric in ['r2', 'rmse', 'mape_pct', 'log10_rmse', 'log10_r2', 'fit_seconds']:
                 summary[metric+'_mean'] = group[metric].mean()
@@ -295,6 +318,12 @@ def development(data, out, quick=False, learning=False, physics_feature=None, *,
     summary.to_csv(out/'cv_summary.csv', index=False)
     pd.DataFrame(all_folds).to_csv(out/'cv_fold_metrics.csv', index=False)
     manifest['selected'] = {target: summary[summary.target == target].sort_values(['log10_rmse_mean', 'model']).iloc[0]['model'] for target in TARGETS}
+    if needs_hyd_gpr:
+        manifest['hydraulic'],hyd_table=hydraulic_cv(
+            df.iloc[train].reset_index(drop=True),FEATURES,folds,None,rigid_pressure(df.iloc[train]),
+            out,cfg['gpr_max_rows'],thermal_oof=thermal_oof[manifest['selected']['dp_thermal_Pa']],
+            warning_records=manifest['warnings'])
+        print(hyd_table.to_string(index=False),flush=True)
     if lc_rows:
         curve = pd.DataFrame(lc_rows)
         curve.to_csv(out/'learning_curve.csv', index=False)
@@ -349,7 +378,8 @@ def finalize(data, out, config=None):
             unit = 'W' if target == 'Q_leak_W' else 'Pa'
             ax.set(xlabel=f'Solver ({unit})', ylabel=f'Prediction ({unit})', title=f'{target}: {name}', xscale='log', yscale='log')
             fig.tight_layout(); fig.savefig(out/(target+'__'+name+'__parity.png'), dpi=300); plt.close(fig)
-    pressure = selected_predictions['dp_thermal_Pa']+1.8*rigid_pressure(test)
+    mode,ratio=load_ratio_model(out,manifest)
+    pressure = selected_predictions['dp_thermal_Pa']+predicted_ratio(ratio,test[FEATURES])*rigid_pressure(test)
     actual = test.dp_design_Pa.to_numpy()
     bad_actual, bad_pred = actual > 48300, pressure > 48300
     boundary = abs(actual-48300) <= 10000
@@ -358,6 +388,14 @@ def finalize(data, out, config=None):
         'false_safe_count': int((bad_actual & ~bad_pred).sum()),
         'false_unsafe_count': int((~bad_actual & bad_pred).sum()),
         'actual_violations': int(bad_actual.sum()), 'constraint_agreement': float(np.mean(bad_actual == bad_pred))}
+    comparisons=manifest.get('config',{}).get('finalize_pressure_comparisons',[mode])
+    comparison_rows=[]
+    for comparison in comparisons:
+        _,ratio_model=load_ratio_model(out,manifest,comparison)
+        comparison_pressure=selected_predictions['dp_thermal_Pa']+predicted_ratio(ratio_model,test[FEATURES])*rigid_pressure(test)
+        comparison_rows.append({'hyd_model':comparison,**pressure_metrics(actual,comparison_pressure)})
+        preds['dp_design_Pa__'+comparison]=comparison_pressure
+    pd.DataFrame(comparison_rows).to_csv(out/'final_pressure_comparison.csv',index=False)
     preds['dp_design_Pa__actual'] = actual
     preds['dp_design_Pa__hybrid'] = pressure
     preds['actual_violation'] = bad_actual
@@ -383,15 +421,18 @@ def main():
     parser.add_argument('--n-jobs', type=int)
     parser.add_argument('--gpr-max-rows', type=int)
     parser.add_argument('--estimate-time', action='store_true')
+    parser.add_argument('--hyd-model',choices=['const','gpr'])
+    parser.add_argument('--ann-ref-config',type=Path)
     args = parser.parse_args()
     out = args.out or ROOT/'outputs'/('full10k' if args.config else 'pilot')
     if args.stage == 'develop':
         development(args.data, out, args.quick, args.learning_curves, args.physics_feature,
                     config=args.config, budget=args.budget, cv_repeats=args.cv_repeats,
-                    n_jobs=args.n_jobs, gpr_max_rows=args.gpr_max_rows, estimate_time=args.estimate_time)
+                    n_jobs=args.n_jobs, gpr_max_rows=args.gpr_max_rows, estimate_time=args.estimate_time,
+                    hyd_model=args.hyd_model,ann_ref_config=args.ann_ref_config)
     else:
         if args.estimate_time or args.quick or args.learning_curves or any(value is not None for value in
-                [args.physics_feature, args.budget, args.cv_repeats, args.n_jobs, args.gpr_max_rows]):
+                [args.physics_feature, args.budget, args.cv_repeats, args.n_jobs, args.gpr_max_rows,args.hyd_model,args.ann_ref_config]):
             parser.error('finalize uses saved effective settings; only --config, --data and --out are accepted.')
         finalize(args.data, out, config=args.config)
 

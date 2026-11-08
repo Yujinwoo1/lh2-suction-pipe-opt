@@ -10,5 +10,31 @@
   "budget": 6,
   "cv_splits": 5,
   "cv_repeats": 3,
-  "n_jobs": 1
+  "n_jobs": 1,
+  "budget_rule": {
+    "fixed_on": "2026-11-08",
+    "reference_budget": 50,
+    "thresholds": [
+      {
+        "max_hours": 4,
+        "budget": 50
+      },
+      {
+        "max_hours": 8,
+        "budget": 20
+      }
+    ],
+    "otherwise_budget": 6,
+    "basis": "실제 합본의 --estimate-time으로 budget 50 전체 develop 시간을 추정해 결정. 합성 벤치마크나 파일럿 테스트 점수로 결정하지 않음."
+  },
+  "hyd_model": "const",
+  "finalize_pressure_comparisons": [
+    "const",
+    "gpr"
+  ],
+  "hydraulic_preregistration": {
+    "fixed_on": "2026-11-08",
+    "model": "raw ratio dp_hyd/dp_rigid; StandardScaler + ConstantKernel*RBF(6 ARD)+WhiteKernel GPR, alpha=1e-7, normalize_y=True, seed 2026",
+    "basis": "파일럿 개발 CV만 비교. 신규 합본 분할에서 const와 gpr 사전 비교. 파일럿 테스트셋 근거 없음."
+  }
 }

@@ -138,3 +138,22 @@ GPR 전처리도 부분표본에만 fit하며 `gpr_subsamples.csv`에 최종 개
 학습 곡선은 개발 자료 안의 고정 20% 검증 분할에서 평가합니다. 요청한 25/50/100/200/400/800/1600/3200/개발 전체 크기 중 개발 행 수 이하만 표에 넣으며, 크기마다 학습 풀에서 5회 무작위 추출합니다. 검증 행 때문에 학습할 수 없는 크기는 `skipped_validation_holdout`, GPR 한도 초과는 `skipped_gpr_max_rows`로 표시합니다. 사용 가능한 학습 풀 전체 크기도 별도 실측점으로 넣습니다. 분할과 표본 ID는 `learning_curve_split.csv`, `learning_curve_samples.csv`에 저장합니다. 최종 홀드아웃은 사용하지 않습니다.
 
 시간 추정은 출력별·모델별 후보 하나를 개발 fold 하나에서 학습한 실측값으로 탐색, refit, 보고 CV, 선택한 학습 곡선, 1만 행 예측 벤치마크 시간을 추정합니다. 후보마다 비용이 다르고 병렬 메모리 경합·I/O·그림 비용은 반영하지 못하므로 대략적인 예산 확인용입니다. 합본이 오면 합본 자체로 다시 추정해야 합니다.
+
+## GPR 비용 측정·수력 보정·참고 ANN 설정
+
+```bash
+# 합성 응답을 쓰는 시간/메모리 측정 전용; 모델이나 합성 정답은 저장하지 않음
+.venv/bin/python benchmark_gpr.py --inputs data/cases_10k.csv --out outputs/gpr_3000_benchmark --threads 1
+# 기존 파일럿 개발 분할과 선택된 thermal 설정을 재사용하는 수력 CV 비교
+.venv/bin/python hydraulics.py --models outputs/pilot_v3 --data data/dataset_ai.csv --out outputs/hydraulic_pilot_cv
+# 새 실험에서 수력 GPR 사용 (기본 const=1.8)
+.venv/bin/python lh2_pipeline.py develop --config configs/full10k.json --data /path/to/merged.csv --out outputs/full10k --hyd-model gpr
+```
+
+GPR 벤치마크는 입력 6개만 읽고 Pipeline 안에서 물리 특성을 추가합니다. seed 2026으로 선택한 3,000행, log10(Q_phys)에 표준편차 0.01 잡음을 더한 합성 응답을 세 후보 커널의 fit/예측 비용 측정에만 씁니다. 커널마다 새 프로세스를 사용하며 Linux 최대 RSS에는 Python과 라이브러리 메모리도 포함됩니다. 10만 행 예측은 원래 입력을 반복하고 batch 1,000으로 실행합니다. alpha는 1e-10이며 커널별 fit 호출은 1회입니다. 이는 실제 dp_thermal 학습시간이나 성능이 아닙니다.
+
+full10k 예산 규칙은 실제 합본의 개발 fold에서 `--estimate-time`으로 계산한 **budget 50 기준 전체 develop 예상시간**이 4시간 이하면 50, 8시간 이하면 20, 그 이상이면 6입니다. 이 규칙은 합본 실행 전에 고정했습니다. 일반 develop도 자동으로 측정 후 규칙을 적용하며 선택 예산과 이유를 manifest에 기록합니다. quick은 축소 설정을 유지하고, 명시적 `--budget`은 CLI override로 기록합니다. 합성 벤치마크로 예산을 확정하지 않습니다.
+
+`--hyd-model {const,gpr}`는 develop·predict·optimize에서 지원합니다. develop 기본값은 const이며, predict/optimize는 별도 지정이 없으면 저장 manifest의 선택을 따릅니다. GPR 보정은 원본 입력 6개로 dp_hyd/dp_rigid 비율을 예측합니다. 스케일러와 GPR은 학습 fold에만 fit하고 최대 행 수를 동일하게 적용합니다. `dp_design=AI(dp_thermal)+ratio_AI*dp_rigid`이며, 고정 구조 GPR의 커널은 학습 자료 안에서 최적화하고 별도 후보 탐색은 하지 않습니다. `configs/full10k.json`은 향후 단 한 번의 finalize에서 const/GPR 양쪽의 경계 오차와 false safe/unsafe를 보고하도록 사전 지정합니다. 기본 const에서도 이 비교용 GPR을 개발 자료로 준비합니다. 이번 작업에서 finalize는 실행하지 않았습니다.
+
+`configs/ann_ref.json`의 7개 값은 모두 null입니다. 항목이 비어 있으면 ann_ref를 건너뛰고 로그와 manifest에 이유를 남깁니다. 출처와 값이 모두 채워지면 각 출력에 튜닝 없는 고정 MLP를 추가합니다. 논문에 없는 항목은 명시적으로 `논문 미기재, 기본값 사용`이라 적을 수 있습니다. 참고 ANN은 원본 6입력만 사용하며 n_train은 학습 fold 안에서 적용하고 실제 학습 수를 기록합니다. `--ann-ref-config`로 별도 설정 파일을 지정할 수 있습니다. 현재 논문 재현 결과를 주장하지 않습니다.

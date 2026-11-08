@@ -37,6 +37,8 @@ def learning_rows(best, X, y, target, name, cap, validation, plan, metric_functi
     for n, repeat, ids, status in plan:
         if name == 'gpr' and n > cap:
             status = 'skipped_gpr_max_rows'
+        if name == 'ann_ref' and n > best.max_rows:
+            status = 'skipped_ann_n_train'
         row = dict(target=target, model=name, n=n, repeat=repeat,
                    validation_n=len(validation), status=status)
         if status == 'evaluated':
@@ -79,22 +81,22 @@ def estimate_runtime(models_by_target, X, targets, folds, cfg, learning=False, l
             n_refit = min(len(X), cfg['gpr_max_rows']) if name == 'gpr' else len(X)
             exponent = 3 if name == 'gpr' else 1
             evaluations = cfg['budget'] if space else 1
-            work = evaluations*len(folds)
-            workers = min(joblib.effective_n_jobs(cfg['n_jobs']), work)
+            work = 0 if target == 'hyd_ratio' else evaluations*len(folds)
+            workers = max(1, min(joblib.effective_n_jobs(cfg['n_jobs']), work))
             tuning_seconds = (fit_seconds+validation_seconds)*work/workers
             refit_seconds = fit_seconds*(n_refit/n_fold)**exponent
             reporting_seconds = (fit_seconds+validation_seconds)*len(folds)
             curve_seconds = 0.0
-            if learning:
+            if learning and target != 'hyd_ratio':
                 _, validation, plan = curve_plan(len(X), labels, cfg['gpr_max_rows'])
                 for n, _, _, status in plan:
                     if status == 'evaluated' and not (name == 'gpr' and n > cfg['gpr_max_rows']):
                         curve_seconds += fit_seconds*(n/n_fold)**exponent + validation_seconds*len(validation)/len(b)
-            predict_seconds = prediction_1k_seconds*30
+            predict_seconds = 0.0 if target == 'hyd_ratio' else prediction_1k_seconds*30
             total = tuning_seconds+refit_seconds+reporting_seconds+curve_seconds+predict_seconds
             rows.append(dict(target=target, model=name, fit_rows=n_fold,
                              one_fold_fit_seconds=fit_seconds, one_fold_predict_seconds=validation_seconds,
-                             candidates=evaluations, cv_folds=len(folds), search_workers=workers,
+                             candidates=evaluations, tunable=bool(space), cv_folds=len(folds), search_workers=workers,
                              estimated_search_seconds=tuning_seconds,
                              estimated_refit_seconds=refit_seconds,
                              estimated_reporting_cv_seconds=reporting_seconds,

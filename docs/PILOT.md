@@ -192,3 +192,45 @@ smoke 유효 설정은 physics_feature=true, seed 2026, 층화 테스트 20%, gp
 학습 곡선은 n=25/50/100/128에서 총 210행을 실측했으며, GPR 한도 초과 생략 12행과 검증 행 보존을 위한 생략 9행을 남겼습니다. GPR은 n=128에서 학습하지 않았고 다른 모델은 n=128까지 평가했습니다. 160개 전체를 학습시켜 검증 행이 섞이는 평가를 하지 않았습니다. `learning_curve_samples.csv`와 고정 검증 분할의 ID도 확인했습니다.
 
 전체 unittest 25개 통과, 실패 0개, 건너뜀 0개입니다. status 가짜 파일에서 failed 3개 제외·정답 결측 허용·혼합 ID를 확인했고, 8,000행 가짜 파일의 기화율 경고 경로도 확인했습니다. 기존 출력 172개 파일 해시는 모두 유지됐습니다. 저장된 smoke 모델의 개발 입력 예측과 최적화 캐시 예측도 일치합니다. 고유 경고 기록은 159개를 manifest에 보존했습니다. 이번 작업에서 finalize와 git add/commit은 실행하지 않았습니다. 실제 합본 자료와 3,000행 GPR 학습 성능·메모리·실행시간은 아직 검증하지 않았습니다. P1-1에서 멈춥니다.
+
+## GPR 3,000행 측정, P1-2·P1-3
+
+3,000행 벤치마크는 data/cases_10k.csv의 원본 입력만 사용합니다. 합성 log10 응답은 log10(Q_phys)+N(0,0.01²)이며, TTR 입력에는 이를 10의 거듭제곱으로 복원해 기존 GPR 학습 경로를 그대로 측정합니다. 연구용 정답 또는 학습 모델을 생성하지 않습니다. 커널별 독립 프로세스, seed 2026, ARD 7차원, alpha=1e-10, BLAS 1 thread 조건입니다. kernel optimizer의 내부 반복은 fit 1회의 일부입니다. 최대 RSS는 Linux 프로세스 절대 peak로, 라이브러리 메모리를 포함합니다. 평균 예측만 측정하며 sigma 계산은 포함하지 않습니다.
+
+15-fold 예산 6/20/50 시간표는 세 커널의 실측 fit·10만 행 예측 시간, 다른 모델의 합성 응답 1-fold/1-candidate 측정을 이용한 proxy입니다. 독립 출력 2개, n_jobs=1, 탐색 CV와 보고 CV 및 refit·3회 1만 행 예측 벤치마크를 포함하고, 학습 곡선과 그림/I/O 비용은 제외합니다. full10k의 수력 사전 비교용 GPR 15 CV fit+1 refit도 주 GPR 시간으로 근사합니다. 후보 alpha와 실제 solver 응답에 따라 optimizer 시간이 달라질 수 있습니다. 이 proxy로 full10k 예산을 결정하지 않습니다.
+
+full10k budget_rule은 2026-11-08에 고정했습니다. 실제 합본의 budget-50 기준 총 예상시간 <=4h이면 50, <=8h이면 20, 나머지는 6입니다. 기준 예산을 50으로 고정해 순환 판단을 방지합니다. 자동 적용한 값·기준 추정시간·이유를 manifest의 budget_decision과 effective_config에 기록합니다. quick과 명시적 CLI override도 이유를 기록합니다.
+
+수력 GPR은 StandardScaler + ConstantKernel*RBF(6 ARD)+WhiteKernel, alpha=1e-7, normalize_y=True, seed 2026의 고정 구조입니다. ratio=dp_hyd/dp_rigid의 원단위 비율을 학습하며 별도 grid 탐색은 없습니다. 실제 solver 출력은 회귀 목표에만 사용하고 입력은 FEATURES 6개입니다. 각 fold와 개발 refit 전에 최대 gpr_max_rows개를 부분표본으로 뽑고 ID를 hydraulic_subsamples.csv에 남깁니다. 향후 합본 finalize에서 const/GPR 양쪽의 경계 MAPE, 판정 불일치, false safe/unsafe를 final_pressure_comparison.csv로 보고하도록 사전 지정했습니다. 이번에는 finalize를 실행하지 않았습니다.
+
+pilot_v3의 개발 분할·선택된 thermal 하이퍼파라미터·15개 fold를 재사용한 수력 비교는 개발 160행의 반복 CV 관측 480개입니다. 경계 38.3–58.3 kPa는 개발 설계점 16개×3회=48개 관측입니다.
+
+| 수력 방식 | 비율 평균 절대 상대오차 [%] | 전체 압력 MAPE [%] | 경계 MAPE [%] | 경계 판정 불일치 / 48 | 불일치 고유 설계점 |
+|---|---:|---:|---:|---:|---:|
+| const 1.8 | 0.956516 | 0.835825 | 1.199382 | 3 | 1 |
+| GPR | 0.196808 | 0.326287 | 0.435328 | 2 | 1 |
+
+두 방법 모두 이 CV에서는 false safe 0건이며 false unsafe는 각각 3건·2건입니다. 열 성분을 실제값으로 고정해 수력 효과만 본 보조 계산의 경계 불일치는 3건·1건입니다. 주 표는 thermal AI의 검증 fold 예측을 사용합니다. 표는 튜닝에 사용된 개발 자료를 재사용하므로 독립 일반화 성능으로 해석하지 않습니다. 파일럿 테스트셋이나 기존 모델 폴더는 변경하지 않았습니다. 최종 비율 목표는 제공된 dp_hyd_Pa/dp_rigid_Pa 열로 계산했고, 압력 조합에만 rigid_pressure()를 사용합니다. 최종 결과는 outputs/hydraulic_pilot_cv_exact_ratio에 별도 저장했습니다. 초기 계산(반올림 전 강체식 분모) 결과는 outputs/hydraulic_pilot_cv에 보존했습니다.
+
+configs/ann_ref.json은 hidden_layer_sizes, activation, solver, learning_rate, max_iter, n_train, source를 모두 null로 만들었습니다. 미기입 상태는 로그를 남기고 건너뜁니다. 채워진 설정은 원본 6입력의 고정 구조 MLP로 두 출력 비교표에 들어가고 튜닝 후보 수·시간은 0으로 기록합니다. n_train은 해당 학습 fold에서만 seed 2026으로 적용하며 가용 행이 적으면 실제 행 수를 기록합니다. 논문 미기재 항목은 사용자 확인 후 명시적인 미기재 마커로 sklearn 기본값을 사용하며, 현재 파일은 값이나 출처를 추측해서 채우지 않았습니다. 단위 테스트의 임시 ANN은 재현 실험이나 논문 설정이 아닙니다.
+
+
+GPR 실측 결과 (2026-11-08~09, 커널별 fit 1회, 총 3회):
+
+| 커널 | fit [s] | 10만 행 예측 [s] | 최대 RSS [MiB] |
+|---|---:|---:|---:|
+| RBF | 207.587 | 37.178 | 2031.336 |
+| Matern_1.5 | 206.167 | 39.441 | 2031.098 |
+| Matern_2.5 | 188.967 | 44.841 | 2031.238 |
+
+예산별 시간 proxy는 다음과 같습니다. GPR 열은 주 출력 2개의 GPR 합계이며 전체 열에는 나머지 모델과 수력 GPR 비교 비용 proxy를 더했습니다. 범위는 세 커널 비용의 최소·최대이며 신뢰구간이 아닙니다. 학습 곡선·그림·I/O는 제외했습니다.
+
+| budget | 주 GPR 평균 [h] | 전체 평균 [h] | 전체 커널별 범위 [h] |
+|---|---:|---:|---:|
+| 6 | 11.876 | 13.379 | 12.680–13.768 |
+| 20 | 35.390 | 38.092 | 36.008–39.254 |
+| 50 | 85.779 | 91.048 | 85.997–93.868 |
+
+실측 gpr_timing.csv, 다른 모델 1-fold proxy 측정, 파생 develop_estimates.csv, 입력 해시·환경·가정 benchmark.json, 경고 로그 benchmark.log를 outputs/gpr_3000_benchmark에 보존했습니다. 벤치마크에는 joblib 모델이나 합성 정답 CSV가 없습니다. 입력 파일 해시는 보존됐습니다. 예산 규칙은 합본이 아직 없으므로 실제 적용하지 않았습니다.
+
+전체 unittest 33개 통과, 실패 0개, 건너뜀 0개입니다. 테스트에는 예산 4/8시간 경계, 자동 예산 적용·manifest 기록, 수력 목표 열 정의·경계 false safe/unsafe, cache의 1회 모델 로드, predict/objective의 const/GPR 일치, ANN 미기입 생략·고정 구조·튜닝 0회를 포함했습니다. 별도 quick 개발 smoke는 gpr_max_rows=100, 후보 2개, CV 3-fold ×1회로 실행했고 ANN 생략 이유와 예산 적용 이유를 manifest에 남겼습니다. 이 smoke의 비율 오차는 0.956508%→0.234640%, 경계 불일치 1/16→1/16으로, 위 15-fold 표와 별개입니다. 해당 smoke는 초기 강체식 분모 정의의 호환성 확인이며 최종 비율 목표 정의는 위 exact_ratio CV와 단위 테스트에서 확인했습니다. 저장 모델로 predict 및 optimize --hyd-model gpr 실행을 완료해 27개 후보를 생성했습니다. 원래 출력 212개 파일은 모두 보존됐으며 finalize와 커밋은 실행하지 않았습니다. 여기서 멈춥니다.

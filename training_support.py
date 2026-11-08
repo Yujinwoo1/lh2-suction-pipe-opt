@@ -9,8 +9,9 @@ from sklearn.model_selection import ParameterGrid, ParameterSampler
 
 SEED = 2026
 DEFAULTS = dict(physics_feature=False, seed=SEED, test_size=.2, stratify='vaporized',
-                gpr_max_rows=3000, budget=6, cv_splits=5, cv_repeats=3, n_jobs=1)
-METADATA = {'preregistered_on', 'decision_basis', 'scope'}
+                gpr_max_rows=3000, budget=6, cv_splits=5, cv_repeats=3, n_jobs=1, hyd_model='const')
+METADATA = {'preregistered_on', 'decision_basis', 'scope', 'budget_rule',
+            'finalize_pressure_comparisons', 'hydraulic_preregistration'}
 
 
 def read_config(config):
@@ -34,6 +35,8 @@ def settings(config=None, quick=False, **overrides):
         raise ValueError('Unknown settings override.')
     if result['seed'] != SEED or result['stratify'] != 'vaporized':
         raise ValueError('Use seed 2026 and stratify=vaporized.')
+    if result['hyd_model'] not in ['const','gpr']:
+        raise ValueError('hyd_model must be const or gpr.')
     if not isinstance(result['physics_feature'], bool):
         raise ValueError('physics_feature must be boolean.')
     for key in ['gpr_max_rows', 'budget', 'cv_splits', 'cv_repeats', 'n_jobs']:
@@ -109,3 +112,23 @@ def sampled_parameters(space, budget):
     if len(unique) != budget:
         raise ValueError('Could not draw the requested unique tuning budget.')
     return list(unique.values())
+
+
+def budget_decision(estimates, rule):
+    """Apply preregistered thresholds to the reference-budget total estimate."""
+    reference=rule['reference_budget']
+    total=0.0
+    for row in estimates.to_dict('records'):
+        count=row['candidates']
+        # Fixed models have one evaluated candidate, not a tunable budget.
+        tunable=row.get('tunable',row['model'] not in ['linear','physics_baseline','ann_ref'])
+        search=row['estimated_search_seconds']*(reference/count if tunable else 1)
+        total += row['estimated_develop_seconds']-row['estimated_search_seconds']+search
+    budget=rule['otherwise_budget']
+    for threshold in rule['thresholds']:
+        limit=threshold['max_hours']*3600
+        if total<=limit or np.isclose(total,limit,rtol=0,atol=1e-6):
+            budget=threshold['budget']; break
+    return dict(applied_budget=budget, reference_budget=reference,
+                reference_estimated_seconds=total,
+                reason=f'Actual --data development-fold estimate at budget {reference}: {total/3600:.6f} h; preregistered <=4h:50, <=8h:20, otherwise:6.')
