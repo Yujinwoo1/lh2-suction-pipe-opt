@@ -36,7 +36,10 @@ from sklearn.preprocessing import StandardScaler, PolynomialFeatures
 from sklearn.ensemble import RandomForestRegressor
 from training_support import (SubsampledTargetRegressor, sample_indices, sampled_parameters,
                               read_config, settings, budget_decision)
-from development_tools import batched_predict, curve_plan, learning_rows, estimate_runtime
+from development_tools import batched_predict, curve_plan, learning_rows, estimate_runtime, fit_validation
+from execution_plan import resource_plan,candidate_parameters,walltime_decision,release_workers,reschedule_estimates
+from joblib import Parallel,delayed,parallel_config
+from threadpoolctl import threadpool_limits
 from ann_reference import load_ann_reference
 from hydraulics import hydraulic_cv, ratio_estimator, load_ratio_model, predicted_ratio, pressure_metrics
 
@@ -164,12 +167,12 @@ def metrics(y, pred):
             'log10_r2': r2_score(np.log10(y), np.log10(pred))}
 
 
-def development(data, out, quick=False, learning=False, physics_feature=None, *,
+def _development_impl(data, out, quick=False, learning=False, physics_feature=None, *,
                 config=None, budget=None, cv_repeats=None, n_jobs=None,
-                gpr_max_rows=None, estimate_time=False, hyd_model=None, ann_ref_config=None):
+                gpr_max_rows=None, estimate_time=False, hyd_model=None, ann_ref_config=None,blas_threads=None):
     declared, cfg = settings(config, quick=quick, physics_feature=physics_feature,
                              budget=budget, cv_repeats=cv_repeats, n_jobs=n_jobs,
-                             gpr_max_rows=gpr_max_rows, hyd_model=hyd_model)
+                             gpr_max_rows=gpr_max_rows, hyd_model=hyd_model,blas_threads=blas_threads)
     # Estimation is read-only, including when --out already contains a run.
     if not estimate_time and out.exists() and any(out.iterdir()):
         raise FileExistsError('Use a new empty output directory to preserve existing experiments.')
@@ -200,7 +203,24 @@ def development(data, out, quick=False, learning=False, physics_feature=None, *,
     if estimate_time or (declared.get('budget_rule') and not quick and budget is None):
         estimate=estimate_runtime(estimate_models,X,estimate_targets,folds,cfg,learning=learning,labels=labels)
         if declared.get('budget_rule') and budget is None and not quick:
-            decision=budget_decision(estimate,declared['budget_rule'])
+            rule=declared['budget_rule']
+            decision=budget_decision(estimate,rule)
+            if decision.get('reduced_estimate_required'):
+                reduced_cfg={**cfg,'gpr_max_rows':rule['fallback_gpr_rows']}
+                capped_models={target:{name:(clone(est).set_params(max_rows=reduced_cfg['gpr_max_rows']),space)
+                               for name,(est,space) in models.items() if name=='gpr'}
+                               for target,models in estimate_models.items()}
+                capped_models={target:models for target,models in capped_models.items() if models}
+                reduced=estimate_runtime(capped_models,X,estimate_targets,folds,reduced_cfg,learning=learning,labels=labels)
+                keys=set(zip(reduced.target,reduced.model))
+                unchanged=estimate.loc[[(target,name) not in keys for target,name in zip(estimate.target,estimate.model)]]
+                unchanged=reschedule_estimates(unchanged,reduced_cfg)
+                reduced_all=pd.concat([unchanged,reduced],ignore_index=True)
+                decision=walltime_decision(estimate,rule,reduced_all)
+                cfg['gpr_max_rows']=decision['applied_gpr_max_rows']
+                for models in models_by_target.values():
+                    if 'gpr' in models:models['gpr'][0].set_params(max_rows=cfg['gpr_max_rows'])
+                estimate=reduced_all
             cfg['budget']=decision['applied_budget']
         print('Budget decision: '+json.dumps(decision,ensure_ascii=False),flush=True)
         if estimate_time:
@@ -213,12 +233,14 @@ def development(data, out, quick=False, learning=False, physics_feature=None, *,
     np.savez(out/'cv_indices.npz', **{f'{i}_{part}': arr for i, pair in enumerate(folds) for part, arr in zip(['train', 'val'], pair)})
     manifest = {'seed': SEED, 'data_sha256': hashlib.sha256(Path(data).read_bytes()).hexdigest(),
         'config': declared, 'effective_config': cfg, 'budget_decision': decision,
+        'execution_revision':declared.get('execution_revision'), 'resource_plans':[],
         'hyd_model':cfg['hyd_model'], 'ann_ref':{'config':ann_spec,'note':ann_note},
         'features': FEATURES, 'physics_feature': cfg['physics_feature'],
         'derived_features': [PHYSICS_FEATURE_NAME] if cfg['physics_feature'] else [],
         'physics_feature_definition': 'log10(physics_heat_leak(X)/mdot_kg_h), fixed P0-2 formula, inside Pipeline' if cfg['physics_feature'] else None,
         'train_rows': len(train), 'test_rows': len(test), 'quick': quick,
-        'cv_folds': len(folds), 'tuning_candidates_per_tunable_model': cfg['budget'],
+        'cv_folds': len(folds), 'tuning_budget_other_models':cfg['budget'],
+        'candidate_count_rule':'GPR exhaustive kernel3 x alpha2 =6; others use budget; fixed models0' if cfg['exhaustive_gpr'] else 'All tunable models use requested budget',
         'gpr_max_rows': cfg['gpr_max_rows'],
         'gpr_note': 'GPR uses a seed-2026 training-only subsample because of O(n^3) cost; other models use all training rows. Search folds use the same subsets as reporting CV.',
         'selection_metric': 'minimum mean CV log10 RMSE, separately per target',
@@ -237,13 +259,13 @@ def development(data, out, quick=False, learning=False, physics_feature=None, *,
             subsamples.extend(dict(target=target, stage=stage, fold=fold, case_id=case_id)
                               for case_id in df.iloc[train[selected]].case_id.tolist())
     pd.DataFrame(subsamples, columns=['target', 'stage', 'fold', 'case_id']).to_csv(out/'gpr_subsamples.csv', index=False)
-    curve_validation, plan = None, None
+    curve_validation, curve_sampling_plan = None, None
     if learning:
-        pool, curve_validation, plan = curve_plan(len(X), labels, cfg['gpr_max_rows'])
+        pool, curve_validation, curve_sampling_plan = curve_plan(len(X), labels, cfg['gpr_max_rows'])
         pd.DataFrame({'case_id': df.iloc[train].case_id.to_numpy(),
                       'split': np.where(np.isin(np.arange(len(X)), curve_validation), 'validation', 'train_pool')}).to_csv(out/'learning_curve_split.csv', index=False)
         curve_samples = [dict(n=n, repeat=repeat, case_id=case_id)
-                         for n, repeat, ids, status in plan if status == 'evaluated'
+                         for n, repeat, ids, status in curve_sampling_plan if status == 'evaluated'
                          for case_id in df.iloc[train[ids]].case_id.tolist()]
         pd.DataFrame(curve_samples).to_csv(out/'learning_curve_samples.csv', index=False)
         manifest['learning_curve_note'] = ('Fixed 20% validation within development; 5 independent seed-2026 draws per n. '
@@ -255,17 +277,27 @@ def development(data, out, quick=False, learning=False, physics_feature=None, *,
         y = df.iloc[train][target].to_numpy()
         for name, (est, space) in models_by_target[target].items():
             print(f"{'Evaluating fixed formula' if name == 'physics_baseline' else 'Tuning'} {target}: {name}", flush=True)
-            sampled = sampled_parameters(space, cfg['budget'])
+            sampled = candidate_parameters(name,space,cfg['budget'],cfg['exhaustive_gpr'])
+            plan=resource_plan(cfg,max_tasks=len(sampled)*len(folds))
+            manifest['resource_plans'].append({'target':target,'model':name,'stage':'search',**plan})
             grid = [{k: [v] for k, v in item.items()} for item in sampled]
-            search = GridSearchCV(est, grid, scoring=log_rmse_score, cv=folds, refit=True,
-                                  n_jobs=cfg['n_jobs'], error_score='raise')
+            search = GridSearchCV(est, grid, scoring=log_rmse_score, cv=folds, refit=False,
+                                  n_jobs=plan['effective_jobs'], pre_dispatch=plan['effective_jobs'], error_score='raise')
             start = time.perf_counter()
             with warnings.catch_warnings(record=True) as captured:
                 warnings.simplefilter('always', ConvergenceWarning)
-                search.fit(X, y)
+                with parallel_config(backend='loky',inner_max_num_threads=cfg['blas_threads']):
+                    search.fit(X, y)
+            release_workers(plan['effective_jobs'])
+            refit_plan=resource_plan(cfg,max_tasks=1)
+            manifest['resource_plans'].append({'target':target,'model':name,'stage':'refit',**refit_plan})
+            best=clone(est).set_params(**search.best_params_)
+            with warnings.catch_warnings(record=True) as refit_warnings:
+                warnings.simplefilter('always')
+                best.fit(X,y)
+            captured.extend(refit_warnings)
             elapsed = time.perf_counter()-start
             manifest['warnings'].extend(sorted({f'{target}/{name}: {w.message}' for w in captured}))
-            best = search.best_estimator_
             key = target+'__'+name
             joblib.dump(best, out/(key+'.joblib'))
             pd.DataFrame(search.cv_results_).to_csv(out/(key+'__search.csv'), index=False)
@@ -276,19 +308,19 @@ def development(data, out, quick=False, learning=False, physics_feature=None, *,
                 'note': 'Fixed P0-2 formula; no tuning or learned parameters.' if name == 'physics_baseline' else ann_note if name=='ann_ref' else 'Development CV only.'}
             row_start = len(all_folds)
             if target=='dp_thermal_Pa': thermal_oof[name]=[]
-            for fold, (a, b) in enumerate(folds):
-                fitted = clone(best)
-                t = time.perf_counter()
-                with warnings.catch_warnings(record=True) as fold_warnings:
-                    warnings.simplefilter('always', ConvergenceWarning)
-                    fitted.fit(X.iloc[a], y[a])
-                manifest['warnings'].extend(sorted({f'{target}/{name}/fold{fold}: {w.message}' for w in fold_warnings}))
-                fit_seconds = time.perf_counter()-t
-                pred = fitted.predict(X.iloc[b])
+            report_plan=resource_plan(cfg,max_tasks=len(folds))
+            manifest['resource_plans'].append({'target':target,'model':name,'stage':'reporting_cv',**report_plan})
+            with parallel_config(backend='loky',inner_max_num_threads=cfg['blas_threads']):
+                validations=Parallel(n_jobs=report_plan['effective_jobs'],pre_dispatch=report_plan['effective_jobs'])(
+                    delayed(fit_validation)(best,X,y,a,b) for a,b in folds)
+            release_workers(report_plan['effective_jobs'])
+            for fold,((a,b),validation) in enumerate(zip(folds,validations)):
+                pred=validation['prediction']
+                manifest['warnings'].extend(f'{target}/{name}/fold{fold}: {message}' for message in validation['warnings'])
                 if target=='dp_thermal_Pa': thermal_oof[name].append(pred)
-                all_folds.append({'target': target, 'model': name, 'fold': fold,
-                    'fit_rows': len(fitted.sample_indices_) if hasattr(fitted,'sample_indices_') else len(a),
-                    'validation_rows': len(b), 'fit_seconds': fit_seconds, **metrics(y[b], pred)})
+                all_folds.append({'target':target,'model':name,'fold':fold,
+                    'fit_rows':validation['fit_rows'],'validation_rows':len(b),
+                    'fit_seconds':validation['fit_seconds'],**metrics(y[b],pred)})
             group = pd.DataFrame(all_folds[row_start:])
             timing_X = pd.concat([X]*int(np.ceil(10000/len(X))), ignore_index=True).iloc[:10000]
             best.predict(timing_X.iloc[:5])
@@ -297,7 +329,8 @@ def development(data, out, quick=False, learning=False, physics_feature=None, *,
                 t = time.perf_counter()
                 batched_predict(best, timing_X)
                 timing.append(time.perf_counter()-t)
-            summary = {'target': target, 'model': name, 'tuning_seconds': 0.0 if name in ['physics_baseline','ann_ref'] else elapsed,
+            summary = {'target': target, 'model': name, 'actual_candidates':len(sampled) if space else 0,
+                'tuning_seconds': 0.0 if name in ['physics_baseline','ann_ref'] else elapsed,
                 'predict_10k_seconds_median': float(np.median(timing))}
             for metric in ['r2', 'rmse', 'mape_pct', 'log10_rmse', 'log10_r2', 'fit_seconds']:
                 summary[metric+'_mean'] = group[metric].mean()
@@ -313,16 +346,18 @@ def development(data, out, quick=False, learning=False, physics_feature=None, *,
                 fig.tight_layout(); fig.savefig(out/(target+'__mlp_history.png'), dpi=300); plt.close(fig)
             if learning:
                 lc_rows.extend(learning_rows(best, X, y, target, name, cfg['gpr_max_rows'],
-                                             curve_validation, plan, metrics, manifest['warnings']))
+                                             curve_validation, curve_sampling_plan, metrics, manifest['warnings']))
     summary = pd.DataFrame(summaries)
     summary.to_csv(out/'cv_summary.csv', index=False)
     pd.DataFrame(all_folds).to_csv(out/'cv_fold_metrics.csv', index=False)
     manifest['selected'] = {target: summary[summary.target == target].sort_values(['log10_rmse_mean', 'model']).iloc[0]['model'] for target in TARGETS}
     if needs_hyd_gpr:
+        hyd_plan=resource_plan(cfg,max_tasks=len(folds))
+        manifest['resource_plans'].append({'target':'hyd_ratio','model':'gpr','stage':'hydraulic_cv',**hyd_plan})
         manifest['hydraulic'],hyd_table=hydraulic_cv(
             df.iloc[train].reset_index(drop=True),FEATURES,folds,None,rigid_pressure(df.iloc[train]),
             out,cfg['gpr_max_rows'],thermal_oof=thermal_oof[manifest['selected']['dp_thermal_Pa']],
-            warning_records=manifest['warnings'])
+            warning_records=manifest['warnings'],n_jobs=hyd_plan['effective_jobs'],blas_threads=cfg['blas_threads'])
         print(hyd_table.to_string(index=False),flush=True)
     if lc_rows:
         curve = pd.DataFrame(lc_rows)
@@ -338,6 +373,20 @@ def development(data, out, quick=False, learning=False, physics_feature=None, *,
     save_json(out/'manifest.json', manifest)
     print('Development complete. Selected models:', manifest['selected'], flush=True)
     return manifest
+
+
+
+def development(data,out,quick=False,learning=False,physics_feature=None,*,
+                config=None,budget=None,cv_repeats=None,n_jobs=None,gpr_max_rows=None,
+                estimate_time=False,hyd_model=None,ann_ref_config=None,blas_threads=None):
+    _,cfg=settings(config,quick=quick,physics_feature=physics_feature,budget=budget,
+                   cv_repeats=cv_repeats,n_jobs=n_jobs,gpr_max_rows=gpr_max_rows,
+                   hyd_model=hyd_model,blas_threads=blas_threads)
+    with threadpool_limits(limits=cfg['blas_threads']):
+        return _development_impl(data,out,quick,learning,physics_feature,config=config,
+            budget=budget,cv_repeats=cv_repeats,n_jobs=n_jobs,gpr_max_rows=gpr_max_rows,
+            estimate_time=estimate_time,hyd_model=hyd_model,ann_ref_config=ann_ref_config,
+            blas_threads=blas_threads)
 
 
 def validate_finalize_config(manifest, config):
@@ -419,6 +468,7 @@ def main():
     parser.add_argument('--budget', type=int)
     parser.add_argument('--cv-repeats', type=int)
     parser.add_argument('--n-jobs', type=int)
+    parser.add_argument('--blas-threads',type=int)
     parser.add_argument('--gpr-max-rows', type=int)
     parser.add_argument('--estimate-time', action='store_true')
     parser.add_argument('--hyd-model',choices=['const','gpr'])
@@ -429,10 +479,10 @@ def main():
         development(args.data, out, args.quick, args.learning_curves, args.physics_feature,
                     config=args.config, budget=args.budget, cv_repeats=args.cv_repeats,
                     n_jobs=args.n_jobs, gpr_max_rows=args.gpr_max_rows, estimate_time=args.estimate_time,
-                    hyd_model=args.hyd_model,ann_ref_config=args.ann_ref_config)
+                    hyd_model=args.hyd_model,ann_ref_config=args.ann_ref_config,blas_threads=args.blas_threads)
     else:
         if args.estimate_time or args.quick or args.learning_curves or any(value is not None for value in
-                [args.physics_feature, args.budget, args.cv_repeats, args.n_jobs, args.gpr_max_rows,args.hyd_model,args.ann_ref_config]):
+                [args.physics_feature, args.budget, args.cv_repeats, args.n_jobs, args.gpr_max_rows,args.hyd_model,args.ann_ref_config,args.blas_threads]):
             parser.error('finalize uses saved effective settings; only --config, --data and --out are accepted.')
         finalize(args.data, out, config=args.config)
 

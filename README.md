@@ -120,7 +120,7 @@ python optimize.py compare --points outputs/opt_pilot/verification_points.csv --
 
 ## 1만 개 합본 준비 (P1-1)
 
-`configs/full10k.json`은 합본 수령 전인 2026-11-08에 고정한 설정입니다. 물리 특성은 파일럿 개발 CV만을 근거로 켰으며, 파일럿 테스트셋은 근거로 쓰지 않았습니다. 기본 budget 6, CV 5-fold × 3회, GPR 최대 3,000개, n_jobs=1입니다.
+`configs/full10k.json`은 합본 수령 전인 2026-11-08에 고정한 설정입니다. 물리 특성은 파일럿 개발 CV만을 근거로 켰으며, 파일럿 테스트셋은 근거로 쓰지 않았습니다. 현재 실행 계획은 CV 5-fold × 1회, GPR 최대 3,000개와 후보 6개 전수 탐색입니다. 다른 튜닝 모델의 budget은 벽시계 규칙으로 정하며, fold worker는 RAM/CPU 한도에서 자동 제한하고 BLAS는 1스레드로 고정합니다.
 
 ```bash
 # 합본 수령 후: 먼저 비용 확인 (모델 저장 및 출력 폴더 변경 없음)
@@ -131,7 +131,7 @@ python optimize.py compare --points outputs/opt_pilot/verification_points.csv --
 .venv/bin/python lh2_pipeline.py finalize --config configs/full10k.json --data /path/to/merged.csv --out outputs/full10k
 ```
 
-설정 우선순위는 기본값 → JSON → quick 축소값 → 명시한 CLI 인자입니다. `--budget`, `--cv-repeats`, `--n-jobs`, `--gpr-max-rows`, `--physics-feature/--no-physics-feature`로 조정한 실제 값은 원본 JSON 전체와 함께 manifest의 `effective_config`에 기록합니다. quick은 기본적으로 후보 2개, 3-fold × 1회이며 발표용 결과가 아닙니다. finalize는 저장된 유효 설정과 모델을 사용하고 다른 JSON은 거부합니다. 이번 P1-1 작업에서 finalize는 실행하지 않았습니다.
+설정 우선순위는 기본값 → JSON → quick 축소값 → 명시한 CLI 인자입니다. `--budget`, `--cv-repeats`, `--n-jobs`, `--gpr-max-rows`, `--physics-feature/--no-physics-feature`, `--blas-threads`로 조정한 실제 값은 원본 JSON 전체와 함께 manifest의 `effective_config`에 기록합니다. quick은 다른 튜닝 모델 후보 2개, 3-fold × 1회이며 발표용 결과가 아닙니다. full10k의 GPR 전수 탐색 설정은 quick에서도 유지해 6개를 평가합니다. finalize는 저장된 유효 설정과 모델을 사용하고 다른 JSON은 거부합니다. 이번 P1-1 작업에서 finalize는 실행하지 않았습니다.
 
 GPR 전처리도 부분표본에만 fit하며 `gpr_subsamples.csv`에 최종 개발 학습과 각 CV 학습 fold의 case_id를 저장합니다. 공통 CV 검증 행은 모두 평가합니다. `status`가 있으면 정확히 `converged`인 행만 사용하고 제외 수·ID를 감사에 기록합니다. 8,000–12,000행 자료에서 회귀 대상의 기화 비율이 파일럿 6%와 3%p 초과 차이면 경고하며 비율 자체를 이유로 거부하지 않습니다.
 
@@ -152,8 +152,23 @@ GPR 전처리도 부분표본에만 fit하며 `gpr_subsamples.csv`에 최종 개
 
 GPR 벤치마크는 입력 6개만 읽고 Pipeline 안에서 물리 특성을 추가합니다. seed 2026으로 선택한 3,000행, log10(Q_phys)에 표준편차 0.01 잡음을 더한 합성 응답을 세 후보 커널의 fit/예측 비용 측정에만 씁니다. 커널마다 새 프로세스를 사용하며 Linux 최대 RSS에는 Python과 라이브러리 메모리도 포함됩니다. 10만 행 예측은 원래 입력을 반복하고 batch 1,000으로 실행합니다. alpha는 1e-10이며 커널별 fit 호출은 1회입니다. 이는 실제 dp_thermal 학습시간이나 성능이 아닙니다.
 
-full10k 예산 규칙은 실제 합본의 개발 fold에서 `--estimate-time`으로 계산한 **budget 50 기준 전체 develop 예상시간**이 4시간 이하면 50, 8시간 이하면 20, 그 이상이면 6입니다. 이 규칙은 합본 실행 전에 고정했습니다. 일반 develop도 자동으로 측정 후 규칙을 적용하며 선택 예산과 이유를 manifest에 기록합니다. quick은 축소 설정을 유지하고, 명시적 `--budget`은 CLI override로 기록합니다. 합성 벤치마크로 예산을 확정하지 않습니다.
+2026-11-09 full10k 예산 규칙은 실제 합본의 `--estimate-time` 벽시계 추정에서 budget 50이 4시간 이하면 50, 아니면 budget 20이 4시간 이하면 20, 나머지는 6입니다. 3,000행·budget 6도 4시간을 넘으면 GPR 2,000행을 다시 측정하고 같은 순서로 선택합니다. 그래도 초과하면 target_met=false로 보고합니다. 이 변경은 합본 수령 전 비용 측정에만 근거하며 solver 성능이나 파일럿 테스트 결과에 따른 변경이 아닙니다. 일반 develop도 이 규칙을 적용하고 예산·행 수·이유를 manifest에 기록합니다. quick은 축소 설정을 유지하고, 명시적 `--budget`은 CLI override로 기록합니다. 합성 벤치마크로 예산을 확정하지 않습니다.
 
 `--hyd-model {const,gpr}`는 develop·predict·optimize에서 지원합니다. develop 기본값은 const이며, predict/optimize는 별도 지정이 없으면 저장 manifest의 선택을 따릅니다. GPR 보정은 원본 입력 6개로 dp_hyd/dp_rigid 비율을 예측합니다. 스케일러와 GPR은 학습 fold에만 fit하고 최대 행 수를 동일하게 적용합니다. `dp_design=AI(dp_thermal)+ratio_AI*dp_rigid`이며, 고정 구조 GPR의 커널은 학습 자료 안에서 최적화하고 별도 후보 탐색은 하지 않습니다. `configs/full10k.json`은 향후 단 한 번의 finalize에서 const/GPR 양쪽의 경계 오차와 false safe/unsafe를 보고하도록 사전 지정합니다. 기본 const에서도 이 비교용 GPR을 개발 자료로 준비합니다. 이번 작업에서 finalize는 실행하지 않았습니다.
 
 `configs/ann_ref.json`의 7개 값은 모두 null입니다. 항목이 비어 있으면 ann_ref를 건너뛰고 로그와 manifest에 이유를 남깁니다. 출처와 값이 모두 채워지면 각 출력에 튜닝 없는 고정 MLP를 추가합니다. 논문에 없는 항목은 명시적으로 `논문 미기재, 기본값 사용`이라 적을 수 있습니다. 참고 ANN은 원본 6입력만 사용하며 n_train은 학습 fold 안에서 적용하고 실제 학습 수를 기록합니다. `--ann-ref-config`로 별도 설정 파일을 지정할 수 있습니다. 현재 논문 재현 결과를 주장하지 않습니다.
+
+## 2026-11-09 비용 기반 실행 계획
+
+```bash
+.venv/bin/python benchmark_native_gpr.py --inputs data/cases_10k.csv --out outputs/gpr_native_benchmark
+.venv/bin/python plan_walltime.py --out outputs/full10k_execution_plan
+```
+
+추가 native-BLAS 벤치마크는 스레드 제한 없이 18스레드에서 Matérn 2.5의 3,000행·2,000행 fit을 각각 1회 측정했습니다. 모델이나 합성 정답은 저장하지 않습니다. 기존 1스레드 벤치마크와 새 native 측정만으로 실행 비용을 비교했으며, 학습 성능을 근거로 설정을 바꾸지 않았습니다.
+
+설정은 fold/candidate 병렬과 BLAS 1스레드로 고정했습니다. 측정 RAM 기준으로 GPR 3,000행은 2 worker, 2,000행은 4 worker입니다. 시작 시 가용 메모리에서 2,048 MiB를 예약하고, 최대 fit RSS ×1.25를 worker당 예약합니다. 사용 한도는 5,930 MiB와 현재 가용량 중 작은 값이며 CPU/BLAS 상한도 적용합니다. 각 단계의 실제 worker 수와 메모리 계산을 manifest에 남깁니다. 탐색·보고 CV·수력 CV를 병렬화하며, refit 전에 worker를 종료해 잔류 RSS와 parent fit이 겹치지 않게 합니다.
+
+GPR은 커널 3개×alpha 2개를 전수 탐색하고 다른 튜닝 모델만 선택 budget을 적용합니다. `cv_summary.csv`의 actual_candidates와 manifest 모델별 tuning_candidates가 실제 수입니다. 기존 “모든 튜닝 모델에 같은 후보 수” 원칙을 이 비용 기반 계획에서 명시적으로 바꿨습니다. CV 반복은 1회로 줄였으며 fold당 약 1,600개 검증 표본을 사용할 예정이라는 이유를 config/manifest의 execution_revision에 기록했습니다.
+
+합성 비용 proxy에서 전체 develop 예상은 3,000행의 budget 6/20/50에서 2.47/2.67/3.10시간, 2,000행에서 0.90/1.00/1.22시간입니다. 2,000행의 1스레드 fit은 직접 측정하지 않았고 native 2,000/3,000행 시간 비율로 환산했습니다. 병렬 경합·프로세스 시작/종료·학습 곡선·그림/I/O 비용은 제외했습니다. 실제 합본의 시간 추정으로 규칙을 다시 적용해야 하며, 이 표로 실행 예산을 확정한 것은 아닙니다.

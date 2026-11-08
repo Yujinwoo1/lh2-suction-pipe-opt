@@ -9,9 +9,12 @@ from sklearn.model_selection import ParameterGrid, ParameterSampler
 
 SEED = 2026
 DEFAULTS = dict(physics_feature=False, seed=SEED, test_size=.2, stratify='vaporized',
-                gpr_max_rows=3000, budget=6, cv_splits=5, cv_repeats=3, n_jobs=1, hyd_model='const')
+                gpr_max_rows=3000, budget=6, cv_splits=5, cv_repeats=3, n_jobs=1, hyd_model='const',blas_threads=None,exhaustive_gpr=False,
+                memory_limit_mib=6144,memory_reserve_mib=2048,memory_safety_factor=1.25,
+                fit_memory_mib={},other_model_memory_mib=1024)
 METADATA = {'preregistered_on', 'decision_basis', 'scope', 'budget_rule',
-            'finalize_pressure_comparisons', 'hydraulic_preregistration'}
+            'finalize_pressure_comparisons', 'hydraulic_preregistration',
+            'execution_revision', 'resource_evidence'}
 
 
 def read_config(config):
@@ -35,6 +38,14 @@ def settings(config=None, quick=False, **overrides):
         raise ValueError('Unknown settings override.')
     if result['seed'] != SEED or result['stratify'] != 'vaporized':
         raise ValueError('Use seed 2026 and stratify=vaporized.')
+    if result['blas_threads'] is not None and (isinstance(result['blas_threads'],bool) or not isinstance(result['blas_threads'],int) or result['blas_threads']<1):
+        raise ValueError('blas_threads must be null (native) or a positive integer.')
+    if not isinstance(result['exhaustive_gpr'],bool):
+        raise ValueError('exhaustive_gpr must be boolean.')
+    if result['memory_limit_mib']<=0 or result['memory_reserve_mib']<0 or result['memory_safety_factor']<1:
+        raise ValueError('Invalid memory limit, reserve or safety factor.')
+    if any(float(v)<=0 for v in result['fit_memory_mib'].values()):
+        raise ValueError('Measured fit memory must be positive.')
     if result['hyd_model'] not in ['const','gpr']:
         raise ValueError('hyd_model must be const or gpr.')
     if not isinstance(result['physics_feature'], bool):
@@ -116,6 +127,9 @@ def sampled_parameters(space, budget):
 
 def budget_decision(estimates, rule):
     """Apply preregistered thresholds to the reference-budget total estimate."""
+    if rule.get('mode')=='wall_clock':
+        from execution_plan import walltime_decision
+        return walltime_decision(estimates,rule)
     reference=rule['reference_budget']
     total=0.0
     for row in estimates.to_dict('records'):

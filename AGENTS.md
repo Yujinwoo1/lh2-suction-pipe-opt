@@ -8,7 +8,7 @@
 - 정답 없는 `cases_10k.csv`는 학습에 사용하지 않으며 예측으로 정답을 채우지 않는다.
 - 실제 튜닝 횟수와 결과를 그대로 보고한다. 대리모델 Pareto는 솔버 검증 결과가 아니다. 수렴 경고를 숨기지 않는다.
 - 작업마다 테스트를 추가하거나 갱신하고 전체 unittest를 실행한다. 에이전트는 git add/commit을 실행하지 않으며, 완료 보고에서 한국어 커밋 메시지만 제안한다. 커밋은 사용자가 직접 수행한다.
-- `docs/codex_tasks.md`의 우선순위를 따른다. 현재 요청은 GPR 3,000행 벤치마크, P1-2 수력 보정, P1-3 ANN 설정 자리 구현 후 멈추고 보고하는 것이다. finalize는 실행하지 않는다.
+- `docs/codex_tasks.md`의 우선순위를 따른다. 현재 요청은 native BLAS 3000/2000행 비용 측정과 full10k 실행 계획 재고정 후 멈추고 보고하는 것이다. finalize는 실행하지 않는다.
 
 ## 실행 명령
 
@@ -24,4 +24,6 @@ python optimize.py compare --points outputs/opt_pilot/verification_points.csv --
 
 1만 개 합본은 configs/full10k.json의 사전 설정을 --config로 읽는다. 사전 설정 원문과 CLI/quick을 반영한 유효 설정을 manifest에 함께 기록한다. GPR만 각 학습 fold와 최종 개발 학습에서 seed 2026 부분표본을 쓰며 case_id를 보존한다.
 
-사용자 승인 예외: cases_10k.csv는 benchmark_gpr.py의 시간·메모리 측정에만 사용할 수 있다. 합성 y는 메모리 안에서만 만들고, 정답을 채우거나 학습 모델을 저장하지 않는다. 수력 보정 비교도 개발 자료만 사용하며 파일럿 테스트셋은 열지 않는다.
+사용자 승인 예외: cases_10k.csv는 benchmark_gpr.py 및 benchmark_native_gpr.py의 시간·메모리 측정에만 사용할 수 있다. 합성 y는 메모리 안에서만 만들고, 정답을 채우거나 학습 모델을 저장하지 않는다. 수력 보정 비교도 개발 자료만 사용하며 파일럿 테스트셋은 열지 않는다.
+
+full10k 실행 변경은 2026-11-09 비용 근거 revision이며 solver 성능/파일럿 테스트 결과에 따른 변경이 아니다. GPR 후보는 6개 전수 탐색, 다른 튜닝 모델은 선택 budget을 적용하고 실제 후보 수를 기록한다. 병렬 worker는 메모리 예약과 CPU/BLAS 한도를 초과하지 않도록 제한한다.

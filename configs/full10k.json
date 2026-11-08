@@ -1,7 +1,7 @@
 {
   "preregistered_on": "2026-11-08",
   "decision_basis": "1만 개 합본 수령 및 실행 전에 확정. physics_feature=true는 파일럿 개발 CV에서 dp_thermal 전 모델 개선을 근거로 정함. 파일럿 테스트셋 결과는 근거로 사용하지 않음.",
-  "scope": "새 합본 데이터와 outputs/full10k의 새 분할에 적용. budget 6은 실행 예산이며 50회 튜닝을 수행했다는 뜻이 아님.",
+  "scope": "새 합본과 outputs/full10k 새 분할에 적용. budget=6은 초기 비용 추정 기본값이며 실제 예산은 벽시계 규칙으로 결정. GPR 후보는 항상6개, 다른 튜닝 모델은 선택 budget개이며 실제 수행 수를 기록한다.",
   "physics_feature": true,
   "seed": 2026,
   "test_size": 0.2,
@@ -9,23 +9,20 @@
   "gpr_max_rows": 3000,
   "budget": 6,
   "cv_splits": 5,
-  "cv_repeats": 3,
-  "n_jobs": 1,
+  "cv_repeats": 1,
+  "n_jobs": -1,
   "budget_rule": {
-    "fixed_on": "2026-11-08",
-    "reference_budget": 50,
-    "thresholds": [
-      {
-        "max_hours": 4,
-        "budget": 50
-      },
-      {
-        "max_hours": 8,
-        "budget": 20
-      }
+    "mode": "wall_clock",
+    "fixed_on": "2026-11-09",
+    "max_wall_hours": 4,
+    "priority": [
+      50,
+      20,
+      6
     ],
-    "otherwise_budget": 6,
-    "basis": "실제 합본의 --estimate-time으로 budget 50 전체 develop 시간을 추정해 결정. 합성 벤치마크나 파일럿 테스트 점수로 결정하지 않음."
+    "initial_gpr_rows": 3000,
+    "fallback_gpr_rows": 2000,
+    "basis": "실제 합본의 --estimate-time 벽시계 추정으로 판정: 50이 4h 이하면 50, 아니면 20이 4h 이하면 20, 나머지는6. 3000행의 budget6도4h초과면2000행을 실제 재측정해 동일 순서로 선택. 그래도 초과하면 target_met=false로 보고. 합성 응답·solver 성능·파일럿 테스트 결과로 예산을 확정하지 않음."
   },
   "hyd_model": "const",
   "finalize_pressure_comparisons": [
@@ -36,5 +33,33 @@
     "fixed_on": "2026-11-08",
     "model": "raw ratio dp_hyd/dp_rigid; StandardScaler + ConstantKernel*RBF(6 ARD)+WhiteKernel GPR, alpha=1e-7, normalize_y=True, seed 2026",
     "basis": "파일럿 개발 CV만 비교. 신규 합본 분할에서 const와 gpr 사전 비교. 파일럿 테스트셋 근거 없음."
+  },
+  "blas_threads": 1,
+  "exhaustive_gpr": true,
+  "memory_limit_mib": 5930,
+  "memory_reserve_mib": 2048,
+  "memory_safety_factor": 1.25,
+  "fit_memory_mib": {
+    "3000": 2051.5,
+    "2000": 1065.6640625
+  },
+  "other_model_memory_mib": 1024,
+  "execution_revision": {
+    "fixed_on": "2026-11-09",
+    "basis": "합본 수령 전 비용 측정에 근거한 실행 계획 변경. solver 정답·CV 성능·파일럿 테스트 결과를 보고 바꾼 것이 아님.",
+    "cv_repeats_reason": "1만 개에서는 5-fold 검증 표본이 fold당 약 1600개여서 반복으로 분산을 줄일 필요가 작음. 마감 전 벽시계 비용을 줄이기 위해 5-fold x1로 고정.",
+    "gpr_search_reason": "커널 3 x alpha 2의 사전 후보 6개를 전수 탐색. 다른 튜닝 모델은 선택 budget 사용. 모델별 실제 후보 수를 표기.",
+    "parallel_reason": "BLAS 1 thread로 fold/candidate를 RAM·CPU 한도 내에서 병렬화. 3000행은 기존 1-thread 실측을 사용하며 2000행 1-thread 비용은 새 native 측정의 행 수 비율로 추정. 병렬 경합은 실측하지 않았음.",
+    "strategy_comparison": "합성 비용 proxy budget50/3000행: BLAS1+RAM 제한 병렬 약3.096h, native18+CPU 제한 직렬 약4.390h. 다른 모델 native 시간은 미측정이며 1-thread proxy를 재사용. 속도 향상이나 병렬 효율을 실측했다고 주장하지 않음."
+  },
+  "resource_evidence": {
+    "native_benchmark": "outputs/gpr_native_benchmark/native_fit_timing.csv",
+    "one_thread_benchmark": "outputs/gpr_3000_benchmark/gpr_timing.csv",
+    "available_before_fit_mib": [
+      8015.16015625,
+      7978.41796875
+    ],
+    "memory_formula": "min(memory_limit_mib, current MemAvailable - reserve) / (measured peak RSS x safety factor), floor; also cap by CPUs / BLAS threads",
+    "native_blas_threads": 18
   }
 }

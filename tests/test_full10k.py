@@ -151,7 +151,7 @@ class FullDataTests(unittest.TestCase):
             self.assertFalse(out.exists())
             self.assertEqual(len(observed_rows), 2)
             self.assertTrue(all(n == 128 for n in observed_rows))
-            self.assertEqual(set(result.cv_folds), {15})
+            self.assertEqual(set(result.cv_folds), {5})
             self.assertIn('Estimated total develop', output.getvalue())
 
 

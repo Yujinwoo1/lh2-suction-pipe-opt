@@ -9,12 +9,14 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.base import clone
+from joblib import Parallel,delayed,parallel_config
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel,RBF,WhiteKernel
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 from training_support import SubsampledTargetRegressor
+from execution_plan import release_workers
 
 RATIO_FILE='hyd_ratio__gpr.joblib'
 
@@ -60,27 +62,35 @@ def pressure_metrics(actual,prediction):
         constraint_agreement=float(np.mean(truth==pred)))
 
 
+
+def hydraulic_fold(model,X,target,a,b,thermal_values,thermal_estimator,thermal_prediction):
+    ratio=clone(model)
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter('always')
+        ratio.fit(X.iloc[a],target[a])
+        if thermal_prediction is None:
+            thermal=clone(thermal_estimator).fit(X.iloc[a],thermal_values[a])
+            thermal_prediction=thermal.predict(X.iloc[b])
+    return dict(selected=a[ratio.sample_indices_],ratios=predicted_ratio(ratio,X.iloc[b]),
+                thermal_prediction=thermal_prediction,warnings=[str(w.message) for w in captured])
+
+
 def hydraulic_cv(dev,features,folds,thermal_estimator,rigid,out,max_rows=3000,
-                 thermal_oof=None,warning_records=None):
+                 thermal_oof=None,warning_records=None,n_jobs=1,blas_threads=None):
     """Paired cross-fit ratios and thermal estimates on development rows only."""
     warning_records=[] if warning_records is None else warning_records
     X=dev[features]; target=dev.dp_hyd_Pa.to_numpy()/dev.dp_rigid_Pa.to_numpy()
     model=ratio_estimator(max_rows)
     rows=[]; samples=[]
-    for fold,(a,b) in enumerate(folds):
-        ratio=clone(model)
-        with warnings.catch_warnings(record=True) as captured:
-            warnings.simplefilter('always')
-            ratio.fit(X.iloc[a],target[a])
-            if thermal_oof is None:
-                thermal=clone(thermal_estimator).fit(X.iloc[a],dev.dp_thermal_Pa.to_numpy()[a])
-                thermal_prediction=thermal.predict(X.iloc[b])
-            else:
-                thermal_prediction=thermal_oof[fold]
-        warning_records.extend(f'hydraulic/fold{fold}: {w.message}' for w in captured)
-        selected=a[ratio.sample_indices_]
-        samples.extend(dict(stage='cv_train',fold=fold,case_id=case_id) for case_id in dev.iloc[selected].case_id.tolist())
-        ratios=predicted_ratio(ratio,X.iloc[b])
+    with parallel_config(backend='loky',inner_max_num_threads=blas_threads):
+        fitted=Parallel(n_jobs=n_jobs,pre_dispatch=n_jobs)(
+            delayed(hydraulic_fold)(model,X,target,a,b,dev.dp_thermal_Pa.to_numpy(),thermal_estimator,
+                None if thermal_oof is None else thermal_oof[fold]) for fold,(a,b) in enumerate(folds))
+    release_workers(n_jobs)
+    for fold,((a,b),result) in enumerate(zip(folds,fitted)):
+        warning_records.extend(f'hydraulic/fold{fold}: {message}' for message in result['warnings'])
+        samples.extend(dict(stage='cv_train',fold=fold,case_id=case_id) for case_id in dev.iloc[result['selected']].case_id.tolist())
+        ratios=result['ratios'];thermal_prediction=result['thermal_prediction']
         for local,index in enumerate(b):
             rows.append(dict(fold=fold,case_id=dev.iloc[index].case_id,
                 ratio_actual=target[index],ratio_gpr=ratios[local],rigid_Pa=rigid[index],

@@ -28,16 +28,16 @@ class AdditionalTasksTests(unittest.TestCase):
 
     def test_budget_rule_boundaries_and_fixed_model_cost(self):
         rule=read_config(p.ROOT/'configs/full10k.json')['budget_rule']
-        for seconds,expected in [(14400,50),(14400.01,20),(28800,20),(28800.01,6)]:
-            search=seconds*6/50
-            estimates=pd.DataFrame([dict(model='gpr',candidates=6,tunable=True,
+        for total50,expected in [(14400,50),(14400.01,20),(36000,20),(36000.1,6)]:
+            search=total50*6/50
+            estimates=pd.DataFrame([dict(model='random_forest',candidates=6,tunable=True,
                 estimated_search_seconds=search,estimated_develop_seconds=search)])
             result=budget_decision(estimates,rule)
             self.assertEqual(result['applied_budget'],expected)
-            self.assertAlmostEqual(result['reference_estimated_seconds'],seconds)
+            self.assertAlmostEqual(result['initial_wall_seconds']['50'],total50)
         fixed=pd.DataFrame([dict(model='ann_ref',candidates=1,tunable=False,
             estimated_search_seconds=100,estimated_develop_seconds=200)])
-        self.assertEqual(budget_decision(fixed,rule)['reference_estimated_seconds'],200)
+        self.assertEqual(budget_decision(fixed,rule)['initial_wall_seconds']['50'],200)
 
     def test_auto_budget_decision_is_applied_and_saved(self):
         config=read_config(p.ROOT/'configs/full10k.json')
@@ -52,7 +52,7 @@ class AdditionalTasksTests(unittest.TestCase):
                 manifest=p.development(p.ROOT/'data/dataset_ai.csv',Path(tmp),config=config)
             self.assertEqual(manifest['effective_config']['budget'],50)
             self.assertEqual(manifest['budget_decision']['applied_budget'],50)
-            self.assertIn('Actual --data',manifest['budget_decision']['reason'])
+            self.assertIn('Cost-only',manifest['budget_decision']['reason'])
             self.assertEqual(manifest['config']['budget'],6)
 
     def test_hydraulic_prediction_cache_objectives_and_constant_override(self):

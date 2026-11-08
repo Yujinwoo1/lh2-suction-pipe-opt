@@ -234,3 +234,33 @@ GPR 실측 결과 (2026-11-08~09, 커널별 fit 1회, 총 3회):
 실측 gpr_timing.csv, 다른 모델 1-fold proxy 측정, 파생 develop_estimates.csv, 입력 해시·환경·가정 benchmark.json, 경고 로그 benchmark.log를 outputs/gpr_3000_benchmark에 보존했습니다. 벤치마크에는 joblib 모델이나 합성 정답 CSV가 없습니다. 입력 파일 해시는 보존됐습니다. 예산 규칙은 합본이 아직 없으므로 실제 적용하지 않았습니다.
 
 전체 unittest 33개 통과, 실패 0개, 건너뜀 0개입니다. 테스트에는 예산 4/8시간 경계, 자동 예산 적용·manifest 기록, 수력 목표 열 정의·경계 false safe/unsafe, cache의 1회 모델 로드, predict/objective의 const/GPR 일치, ANN 미기입 생략·고정 구조·튜닝 0회를 포함했습니다. 별도 quick 개발 smoke는 gpr_max_rows=100, 후보 2개, CV 3-fold ×1회로 실행했고 ANN 생략 이유와 예산 적용 이유를 manifest에 남겼습니다. 이 smoke의 비율 오차는 0.956508%→0.234640%, 경계 불일치 1/16→1/16으로, 위 15-fold 표와 별개입니다. 해당 smoke는 초기 강체식 분모 정의의 호환성 확인이며 최종 비율 목표 정의는 위 exact_ratio CV와 단위 테스트에서 확인했습니다. 저장 모델로 predict 및 optimize --hyd-model gpr 실행을 완료해 27개 후보를 생성했습니다. 원래 출력 212개 파일은 모두 보존됐으며 finalize와 커밋은 실행하지 않았습니다. 여기서 멈춥니다.
+
+## 2026-11-09 합본 수령 전 비용 기반 실행 계획 재고정
+
+이번 변경의 근거는 합성 응답을 사용한 시간·메모리 측정뿐입니다. solver 정답, 파일럿 테스트셋 결과, 새 모델의 예측 성능을 보고 바꾼 것이 아닙니다. configs/full10k.json의 execution_revision에 날짜와 이유를 고정했고, 원본 설정 및 변경 이유를 manifest에 함께 기록합니다. 이전 절의 CV 15-fold·동일 budget·8시간 규칙은 당시 실행 기록이며 새 합본에는 아래 계획을 적용합니다.
+
+native-BLAS 측정 명령은 `python benchmark_native_gpr.py --inputs data/cases_10k.csv --out outputs/gpr_native_benchmark`입니다. Matérn 2.5, alpha=1e-10, 물리 특성을 포함한 7차원, seed 2026과 같은 합성 응답 정의를 사용했습니다. 스레드 제한 없이 NumPy/SciPy OpenBLAS 모두 18스레드였고, fit 호출은 3,000행·2,000행 각각 1회입니다. 가중치나 합성 정답을 저장하지 않았습니다.
+
+| 행 수 | native fit [s] | 최대 RSS [MiB] | fit 전 가용 RAM [MiB] |
+|---|---:|---:|---:|
+| 3000 | 134.141 | 2051.500 | 8015.160 |
+| 2000 | 79.966 | 1065.664 | 7978.418 |
+
+가용 RAM 중 작은 측정값 약 7,978 MiB에서 시스템 예약 2,048 MiB를 뺀 5,930 MiB를 사용 상한으로 정했습니다. worker당 예약량은 최대 RSS×1.25로, 3,000행 2,564.375 MiB·2,000행 1,332.080 MiB입니다. RAM 상한은 각각 동시 2개·4개입니다. BLAS 18스레드로 동시 fit하면 CPU 18개 기준 worker 1개로 제한해야 합니다.
+
+선택한 계획은 BLAS 1스레드와 RAM/CPU 제한 fold 병렬입니다. 3,000행·budget 50의 비용 proxy는 이 계획에서 3.096시간, native 18스레드 직렬에서 4.390시간이었습니다. native 조건의 다른 모델 비용은 직접 재측정하지 않았고 기존 1스레드 proxy를 재사용한 제한이 있습니다. 3,000행 GPR의 1스레드 시간은 이전 세 커널 측정의 평균을 사용했습니다. 2,000행의 1스레드 시간은 새 native 측정의 행 수별 비율로 옮긴 추정이며 직접 실측하지 않았습니다.
+
+| GPR 행 수 | worker | budget 6 [h] | budget 20 [h] | budget 50 [h] |
+|---|---:|---:|---:|---:|
+| 3000 | 2 | 2.468 | 2.668 | 3.096 |
+| 2000 | 4 | 0.904 | 1.001 | 1.218 |
+
+전체 develop proxy는 독립 출력 2개의 탐색 CV·보고 CV·refit·예측 벤치마크와 수력 GPR 비교를 포함합니다. 학습 곡선·프로세스 시작/종료·그림/I/O·병렬 경합은 제외했습니다. 후보별 수렴 비용을 정확히 예측하지 못하므로 합본의 실제 실행시간이나 모델 성능을 보장하는 표가 아닙니다.
+
+CV는 5-fold×1회입니다. 약 1만 행에서는 검증 fold당 약 1,600행이어서 반복으로 분산을 줄일 필요가 작다는 사전 판단과 비용 절감이 이유입니다. GPR은 고정 3 kernel×2 alpha=6개를 전수 탐색하고 다른 튜닝 모델만 budget개를 평가합니다. 비교표 actual_candidates·manifest tuning_candidates는 실제 수입니다. 고정 선형·물리식·참고 ANN의 튜닝 수는 0입니다.
+
+각 단계에서 현재 MemAvailable과 설정 상한을 재확인해 worker 수를 RAM·CPU 상한 중 작은 값으로 제한합니다. 탐색·보고 CV·수력 CV는 같은 스레드 제어를 씁니다. 탐색 후 worker를 종료하고 메모리를 다시 확인한 뒤 parent refit 1회를 수행합니다. GridSearchCV를 refit=False로 두고 같은 best_params를 parent에서 한 번 학습하므로 후보 수나 fit 횟수를 늘리지 않았습니다.
+
+budget 50의 벽시계 추정이 4시간 이하면 50, 아니면 20이 4시간 이하면 20, 나머지는 6입니다. 3,000행·6도 4시간 초과면 2,000행 GPR만 다시 실측하고 다른 모델은 기존 1-fold 측정을 새 worker 수로 재계산해 같은 규칙을 적용합니다. 2,000행·6도 초과면 target_met=false로 기록합니다. 원본·유효 설정, 예산·행 수 판단, 단계별 resource_plans를 manifest에 저장하며 quick·명시 CLI override의 이유도 남깁니다.
+
+전체 unittest 38개 통과, 실패 0개, 건너뜀 0개입니다. 6개 조합·GPR 고정 후보 수·동시 fit 메모리/CPU 제한·5-fold·2,000행 재측정과 모델/manifest 적용·목표 초과 표시를 확인했습니다. 실제 합본 develop, finalize, git add/commit은 실행하지 않았습니다. 여기서 멈춥니다.
