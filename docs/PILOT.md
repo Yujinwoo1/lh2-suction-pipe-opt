@@ -44,7 +44,31 @@ python -m venv .venv
 
 최종 테스트에서는 전체 압력 오차, 38,300–58,300 Pa 경계 구간 오차와 표본 수, 위험 조건을 만족으로 예측한 수(false safe), 그 반대 수를 저장합니다. `vaporized`는 제공된 압력 임계값으로 정의된 라벨이며 관측된 기화 실험값이 아닙니다.
 
-열침입 물리 기준선은 온도차와 반경 조건 등이 확정되지 않아 임의 상수로 만들지 않았습니다. [8,9] 재현 ANN, NSGA-II, 실제 솔버 재검증도 이번 파일럿 범위에는 포함하지 않습니다. 참고논문과 솔버 결과가 들어오면 추가합니다.
+열침입 물리 기준선과 [8,9] 재현 ANN은 아직 구현하지 않았습니다. NSGA-II 최적화와 솔버 결과 비교 기능은 아래 명령으로 제공합니다. 실제 솔버 재검증은 결과를 받은 뒤 수행합니다.
+
+## 대리모델 최적화 (P0-1)
+
+`python optimize.py run --models outputs/pilot`은 기존 모델과 테스트셋을 변경하지 않고 `outputs/opt_pilot/`에 결과를 생성합니다. `pymoo` 설치가 필요합니다. 시나리오는 `configs/scenarios.json`으로 관리하며 범위 밖 조건은 거부합니다. 설계변수는 D=12–50 mm, 단열=2–25 mm, 최소화 목적은 Q_leak, dp_thermal+1.8×dp_rigid, D_o이며 압력 한계는 48,300 Pa입니다.
+
+NSGA-II(100개체, 200세대, seed 2026)와 200×200 격자를 비교합니다. 격자는 대리모델 기준의 정답지이며 솔버 정답이 아닙니다. HV는 격자 Pareto ideal/nadir로 두 전선을 공통 정규화하고 기준점 (1.1, 1.1, 1.1)을 사용합니다. `hv_summary.csv`에 정규화 상수와 비율을 기록합니다.
+
+합친 비지배 전선에서 A=Q_leak 최소, B=각 목적을 [0,1] 정규화한 뒤 ideal(0,0,0)까지 유클리드 거리 최소, C=D_o 최소를 고릅니다. 추가 6개는 정규화 목적공간의 farthest-point sampling이며 거리 0.01 이내 후보는 높은 dp_thermal GPR σ, 38.3–48.3 kPa 구간과의 가까운 거리를 우선합니다. 전선이 작으면 추가 개수도 줄어듭니다. A/B/C가 동일 설계일 수 있습니다. GPR σ는 역변환한 Pa가 아닌 log10 표준편차이며 비GPR은 NaN입니다.
+
+전선 CSV, `T3_candidates.csv`, 입력 6열의 `verification_inputs.csv`, 예측·ID·n*를 포함한 `verification_points.csv`, 300 dpi 흰 배경 `F4.png`를 생성합니다. n*=1040/(4Lf)가 20 미만이고 정수와 차이가 0.1 미만이면 경고합니다. 이 규칙은 검증된 공진 판정이 아닙니다.
+
+`python optimize.py compare --points outputs/opt_pilot/verification_points.csv --solver solver_results.csv`는 ID가 일대일 대응하는 솔버의 `point_id,Q_leak_W,dp_design_Pa`를 받아 T4를 생성합니다. 오차는 솔버 값을 분모로 계산하고 제약 판정 일치 여부도 기록합니다. 가짜 솔버 데이터는 단위 테스트 전용이며 연구 결과로 사용하지 않습니다.
+
+## P0-1 실행 확인 (2026-11-08)
+
+`.venv`의 pymoo 0.6.2에서 기본 명령으로 NSGA-II(개체 100, 200세대, seed 2026)와 시나리오별 40,000개 격자 평가를 완료했습니다. 모델 재학습과 `finalize`는 실행하지 않았습니다.
+
+| 시나리오 | 격자 Pareto 수 | NSGA-II Pareto 수 | NSGA-II HV / 격자 HV | 재검증 후보 수 |
+|---|---:|---:|---:|---:|
+| S1 | 35,800 | 100 | 0.935528 | 9 |
+| S2 | 29,252 | 100 | 0.921909 | 9 |
+| S3 | 29,595 | 100 | 0.948267 | 9 |
+
+총 27개 후보, 입력 전용 CSV, T3, 전선·HV 표와 F4를 `outputs/opt_pilot/`에 생성했습니다. 이 수치는 대리모델 평가이며 실제 솔버 재검증 결과는 없습니다. T4 비교는 합성 데이터 단위 테스트에서만 확인했습니다. `.venv/bin/python -m unittest discover -s tests -v` 결과는 13개 통과, 실패 0개, 건너뜀 0개입니다. P0-2 이후 항목은 수행하지 않았습니다.
 
 ## 결과 읽기
 

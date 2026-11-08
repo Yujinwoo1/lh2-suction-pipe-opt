@@ -1,0 +1,5 @@
+[
+  {"id": "S1", "f_Hz": 6, "L_m": 2, "mdot_kg_h": 80, "k_MLI_W_mK": 0.00008},
+  {"id": "S2", "f_Hz": 6, "L_m": 2, "mdot_kg_h": 80, "k_MLI_W_mK": 0.0027},
+  {"id": "S3", "f_Hz": 9, "L_m": 2, "mdot_kg_h": 100, "k_MLI_W_mK": 0.00008}
+]

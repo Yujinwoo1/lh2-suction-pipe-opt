@@ -8,7 +8,7 @@ import pandas as pd
 from lh2_pipeline import FEATURES, BOUNDS, TARGETS, rigid_pressure
 
 
-def predict(frame, model_dir):
+def validate_inputs(frame):
     missing = set(BOUNDS)-set(frame)
     if missing:
         raise ValueError(f'Missing inputs: {sorted(missing)}')
@@ -19,6 +19,11 @@ def predict(frame, model_dir):
         if not data[col].between(lo, hi).all():
             raise ValueError(f'{col} outside training design domain; extrapolation is not supported.')
     data['log10_k_MLI'] = np.log10(data.k_MLI_W_mK)
+    return data
+
+
+def predict(frame, model_dir):
+    data = validate_inputs(frame)
     manifest = json.loads((model_dir/'manifest.json').read_text(encoding='utf-8'))
     for target in TARGETS:
         name = manifest['selected'][target]

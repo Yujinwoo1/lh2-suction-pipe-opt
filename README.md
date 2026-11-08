@@ -76,8 +76,22 @@ python predict.py /path/to/new_cases.csv --models outputs/pilot --output outputs
 - 개발 160개 / 테스트 40개, seed 2026, 개발 CV 5-fold × 3회입니다.
 - 선형회귀, 다항 Ridge, RF, GPR, MLP를 비교하며 두 출력을 각각 log10 공간에서 학습합니다.
 - 튜닝 모델당 6개 후보를 사용한 파일럿입니다. 원 지시서의 50회 튜닝 전체를 수행한 것으로 표기하지 않습니다.
-- 최적화, 신규 1D 솔버 재검증, 참고논문 ANN 재현, 열침입 물리 기준선은 아직 포함하지 않았습니다.
+- NSGA-II와 격자 기반 대리모델 최적화를 제공합니다. 신규 1D 솔버 검증, 참고논문 ANN 재현, 열침입 물리 기준선은 아직 포함하지 않았습니다.
 - 200개는 실험 측정값이 아닌 1D 솔버 출력입니다. 수력 근사오차를 AI 오차와 분리해야 합니다.
 - 정확 GPR은 개발 자료 3,000개 초과 시 중단합니다. 1만 개 결과를 받으면 비교 설계를 확장해야 합니다.
 
 세부 방법은 [파일럿 설명](docs/PILOT.md)을 참고하세요. 기존 Windows 전용 `run_local.ps1`과 로컬 Python 패키지는 이 저장소에 포함하지 않았습니다.
+
+## 최적화와 솔버 재검증 전달
+
+```bash
+python -m pip install -r requirements.txt
+python optimize.py run --models outputs/pilot
+python optimize.py compare --points outputs/opt_pilot/verification_points.csv --solver solver_results.csv
+```
+
+`configs/scenarios.json`의 S1–S3를 대상으로 seed 2026, 개체 100, 200세대 NSGA-II와 200×200 격자를 평가합니다. 모델은 한 번만 로드합니다. 새 모델 폴더는 `--models`, 시나리오는 `--scenarios`, 새 출력은 `--out`으로 지정합니다. 기존 출력 폴더는 덮어쓰지 않습니다.
+
+`outputs/opt_pilot/`에 `pareto_S*.csv`, `grid_pareto_S*.csv`, `hv_summary.csv`, `T3_candidates.csv`, `verification_points.csv`, 여섯 입력 열만 담은 `verification_inputs.csv`, `F4.png`, 설정과 후보 정의를 기록한 `optimization.json`을 저장합니다. HV는 격자 ideal/nadir로 공통 정규화하고 기준점 (1.1, 1.1, 1.1)을 사용합니다. 격자와 NSGA-II를 합친 비지배 전선에서 A(열침입 최소), B(정규화 ideal 거리 최소), C(외경 최소), 추가 최대 6개를 선택합니다. 극점이 겹치면 A/B/C가 같은 설계일 수 있습니다.
+
+솔버 결과는 `verification_points.csv`의 `point_id`를 그대로 보존한 `point_id,Q_leak_W,dp_design_Pa` 열로 전달받습니다. 입력 전용 파일에는 ID가 없으므로 원래 행 순서와 점 목록의 대응을 유지하세요. `compare`는 ID로 결합하여 부호 있는 오차율 100×(예측/솔버−1), 절대 오차율, 제약 일치 여부를 `T4_comparison.csv`로 저장합니다. **대리모델 Pareto와 HV는 솔버 검증 결과가 아닙니다.** 비GPR의 불확실성은 NaN이며 GPR σ는 log10 공간 값입니다.
