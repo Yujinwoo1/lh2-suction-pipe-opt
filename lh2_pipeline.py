@@ -29,11 +29,14 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, RBF, Matern, WhiteKernel
 from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_percentage_error
-from sklearn.model_selection import train_test_split, RepeatedKFold, KFold, GridSearchCV, ParameterSampler
+from sklearn.model_selection import train_test_split, RepeatedKFold, GridSearchCV
 from sklearn.neural_network import MLPRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler, PolynomialFeatures
 from sklearn.ensemble import RandomForestRegressor
+from training_support import (SubsampledTargetRegressor, sample_indices, sampled_parameters,
+                              read_config, settings)
+from development_tools import batched_predict, curve_plan, learning_rows, estimate_runtime
 
 SEED = 2026
 FEATURES = ['D_mm', 't_ins_mm', 'f_Hz', 'L_m', 'mdot_kg_h', 'log10_k_MLI']
@@ -57,6 +60,15 @@ def load_data(path):
     missing = sorted(set(required) - set(df))
     if missing:
         raise ValueError(f'Missing solver-output columns: {missing}. Input-only cases_10k.csv cannot train a model.')
+    source_rows = len(df)
+    excluded = df.loc[df.status != 'converged', 'case_id'].tolist() if 'status' in df else []
+    if 'status' in df:
+        df = df.loc[df.status == 'converged'].copy().reset_index(drop=True)
+    df.attrs['source_rows'] = source_rows
+    df.attrs['excluded_status_count'] = len(excluded)
+    df.attrs['excluded_status_case_ids'] = excluded
+    if 8000 <= source_rows <= 12000 and len(df) and abs(df.vaporized.mean()-.06) > .03:
+        warnings.warn(f'Large dataset vaporized rate {df.vaporized.mean():.2%} differs from pilot 6% by more than 3 percentage points.')
     if df[required].isna().any().any() or not np.isfinite(df[required].to_numpy(dtype=float)).all():
         raise ValueError('Missing or nonfinite values found.')
     if df.case_id.duplicated().any() or df.duplicated(list(BOUNDS)).any():
@@ -91,7 +103,11 @@ def audit(df, out):
     rows.to_csv(out/'physics_audit.csv', index=False)
     heat_error = 100*np.abs(physics_heat_leak(df)/df.Q_leak_W.to_numpy()-1)
     save_json(out/'data_audit.json', {'physics_baseline_mean_relative_error_pct': float(heat_error.mean()),
-        'physics_baseline_max_relative_error_pct': float(heat_error.max()), 'rows': len(df), 'vaporized': int(df.vaporized.sum()),
+        'physics_baseline_max_relative_error_pct': float(heat_error.max()),
+        'source_rows': df.attrs.get('source_rows', len(df)),
+        'excluded_status_count': df.attrs.get('excluded_status_count', 0),
+        'excluded_status_case_ids': df.attrs.get('excluded_status_case_ids', []),
+        'vaporized_rate': float(df.vaporized.mean()), 'rows': len(df), 'vaporized': int(df.vaporized.sum()),
         'boundary_rows': int(df.dp_design_Pa.between(38300, 58300).sum()),
         'hydraulic_only_mean_error_pct': float(rows.relative_error_pct.mean()),
         'hydraulic_only_max_error_pct': float(rows.relative_error_pct.max()),
@@ -120,6 +136,9 @@ def candidates(quick=False, target=None, physics_feature=False):
                  max_iter=1000 if quick else 3000, early_stopping=True, validation_fraction=.2, n_iter_no_change=40))]),
             {prefix+'hidden_layer_sizes': [(32,), (64,), (32, 32), (64, 32)], prefix+'activation': ['tanh', 'relu'],
              prefix+'alpha': [.0001, .001, .01], prefix+'learning_rate_init': [.001, .003]})}
+    gpr = models['gpr'][0]
+    models['gpr'] = (SubsampledTargetRegressor(regressor=gpr.regressor,
+                     func=np.log10, inverse_func=exp10), models['gpr'][1])
     if target == 'Q_leak_W':
         models['physics_baseline'] = (PhysicsBaseline(), {})
     return models
@@ -143,40 +162,82 @@ def metrics(y, pred):
             'log10_r2': r2_score(np.log10(y), np.log10(pred))}
 
 
-def development(data, out, quick=False, learning=False, physics_feature=False):
-    out.mkdir(parents=True, exist_ok=True)
-    if (out/'manifest.json').exists():
-        raise FileExistsError('Use a new output directory to preserve the existing experiment.')
+def development(data, out, quick=False, learning=False, physics_feature=None, *,
+                config=None, budget=None, cv_repeats=None, n_jobs=None,
+                gpr_max_rows=None, estimate_time=False):
+    declared, cfg = settings(config, quick=quick, physics_feature=physics_feature,
+                             budget=budget, cv_repeats=cv_repeats, n_jobs=n_jobs,
+                             gpr_max_rows=gpr_max_rows)
+    # Estimation is read-only, including when --out already contains a run.
+    if not estimate_time and out.exists() and any(out.iterdir()):
+        raise FileExistsError('Use a new empty output directory to preserve existing experiments.')
     df = load_data(data)
+    train, test = train_test_split(np.arange(len(df)), test_size=cfg['test_size'],
+                                   random_state=SEED, stratify=df[cfg['stratify']])
+    X = df.iloc[train][FEATURES]
+    labels = df.iloc[train].vaporized.to_numpy()
+    folds = list(RepeatedKFold(n_splits=cfg['cv_splits'], n_repeats=cfg['cv_repeats'],
+                               random_state=SEED).split(X))
+    models_by_target = {target: candidates(quick, target=target,
+                                          physics_feature=cfg['physics_feature']) for target in TARGETS}
+    for models in models_by_target.values():
+        if 'gpr' in models:
+            models['gpr'][0].set_params(max_rows=cfg['gpr_max_rows'])
+    if estimate_time:
+        return estimate_runtime(models_by_target, X,
+                                {target: df.iloc[train][target].to_numpy() for target in TARGETS},
+                                folds, cfg, learning=learning, labels=labels)
+    out.mkdir(parents=True, exist_ok=True)
     audit(df, out)
-    train, test = train_test_split(np.arange(len(df)), test_size=.2, random_state=SEED, stratify=df.vaporized)
     split = pd.DataFrame({'case_id': df.case_id, 'split': np.where(np.isin(np.arange(len(df)), test), 'test', 'development')})
     split.to_csv(out/'split.csv', index=False)
-    X = df.iloc[train][FEATURES]
-    folds = list(RepeatedKFold(n_splits=3 if quick else 5, n_repeats=1 if quick else 3, random_state=SEED).split(X))
     np.savez(out/'cv_indices.npz', **{f'{i}_{part}': arr for i, pair in enumerate(folds) for part, arr in zip(['train', 'val'], pair)})
-    budget = 2 if quick else 6
     manifest = {'seed': SEED, 'data_sha256': hashlib.sha256(Path(data).read_bytes()).hexdigest(),
-        'features': FEATURES, 'physics_feature': physics_feature,
-        'derived_features': [PHYSICS_FEATURE_NAME] if physics_feature else [],
-        'physics_feature_definition': 'log10(physics_heat_leak(X)/mdot_kg_h), fixed P0-2 formula, inside Pipeline' if physics_feature else None,
+        'config': declared, 'effective_config': cfg,
+        'features': FEATURES, 'physics_feature': cfg['physics_feature'],
+        'derived_features': [PHYSICS_FEATURE_NAME] if cfg['physics_feature'] else [],
+        'physics_feature_definition': 'log10(physics_heat_leak(X)/mdot_kg_h), fixed P0-2 formula, inside Pipeline' if cfg['physics_feature'] else None,
         'train_rows': len(train), 'test_rows': len(test), 'quick': quick,
-        'cv_folds': len(folds), 'tuning_candidates_per_tunable_model': budget,
+        'cv_folds': len(folds), 'tuning_candidates_per_tunable_model': cfg['budget'],
+        'gpr_max_rows': cfg['gpr_max_rows'],
+        'gpr_note': 'GPR uses a seed-2026 training-only subsample because of O(n^3) cost; other models use all training rows. Search folds use the same subsets as reporting CV.',
         'selection_metric': 'minimum mean CV log10 RMSE, separately per target',
         'cv_note': 'CV used for tuning and selection; these are not unbiased generalization estimates. Final test is separate.',
+        'learning_curves': learning,
+        'warnings_note': 'Unique parent-process warning records below; parallel search workers also emit warnings to stderr.',
         'versions': {'python': platform.python_version(), 'numpy': np.__version__, 'pandas': pd.__version__, 'sklearn': sklearn.__version__, 'matplotlib': matplotlib.__version__},
         'models': {}, 'warnings': []}
+    subsamples = []
+    for target, models in models_by_target.items():
+        if 'gpr' not in models:
+            continue
+        for stage, fold, positions in [('refit', -1, np.arange(len(X))),
+                                        *[('cv_train', i, a) for i, (a, _) in enumerate(folds)]]:
+            selected = positions[sample_indices(len(positions), cfg['gpr_max_rows'])]
+            subsamples.extend(dict(target=target, stage=stage, fold=fold, case_id=case_id)
+                              for case_id in df.iloc[train[selected]].case_id.tolist())
+    pd.DataFrame(subsamples, columns=['target', 'stage', 'fold', 'case_id']).to_csv(out/'gpr_subsamples.csv', index=False)
+    curve_validation, plan = None, None
+    if learning:
+        pool, curve_validation, plan = curve_plan(len(X), labels, cfg['gpr_max_rows'])
+        pd.DataFrame({'case_id': df.iloc[train].case_id.to_numpy(),
+                      'split': np.where(np.isin(np.arange(len(X)), curve_validation), 'validation', 'train_pool')}).to_csv(out/'learning_curve_split.csv', index=False)
+        curve_samples = [dict(n=n, repeat=repeat, case_id=case_id)
+                         for n, repeat, ids, status in plan if status == 'evaluated'
+                         for case_id in df.iloc[train[ids]].case_id.tolist()]
+        pd.DataFrame(curve_samples).to_csv(out/'learning_curve_samples.csv', index=False)
+        manifest['learning_curve_note'] = ('Fixed 20% validation within development; 5 independent seed-2026 draws per n. '
+            'Requested n above the remaining pool is marked skipped; full pool is an extra measured point. '
+            'Hyperparameters fixed by development CV; descriptive, not independent model-selection evidence.')
     all_folds, summaries, lc_rows = [], [], []
     for target in TARGETS:
         y = df.iloc[train][target].to_numpy()
-        for name, (est, space) in candidates(quick, target=target, physics_feature=physics_feature).items():
+        for name, (est, space) in models_by_target[target].items():
             print(f"{'Evaluating fixed formula' if name == 'physics_baseline' else 'Tuning'} {target}: {name}", flush=True)
-            # GPR cap applies only to development data and is recorded explicitly.
-            if name == 'gpr' and len(X) > 3000:
-                raise ValueError('This pilot pipeline limits exact GPR to 3000 development rows. Design a matched-sample study before scaling up.')
-            sampled = list(ParameterSampler(space, n_iter=budget, random_state=SEED)) if space else [{}]
+            sampled = sampled_parameters(space, cfg['budget'])
             grid = [{k: [v] for k, v in item.items()} for item in sampled]
-            search = GridSearchCV(est, grid, scoring=log_rmse_score, cv=folds, refit=True, n_jobs=1, error_score='raise')
+            search = GridSearchCV(est, grid, scoring=log_rmse_score, cv=folds, refit=True,
+                                  n_jobs=cfg['n_jobs'], error_score='raise')
             start = time.perf_counter()
             with warnings.catch_warnings(record=True) as captured:
                 warnings.simplefilter('always', ConvergenceWarning)
@@ -190,6 +251,7 @@ def development(data, out, quick=False, learning=False, physics_feature=False):
             manifest['models'][key] = {'parameters': search.best_params_, 'tuning_seconds': 0.0 if name == 'physics_baseline' else elapsed,
                 'tuning_candidates': 0 if not space else len(sampled),
                 'evaluation_seconds': elapsed,
+                'fit_rows': len(best.sample_indices_) if name == 'gpr' else len(X),
                 'note': 'Fixed P0-2 formula; no tuning or learned parameters.' if name == 'physics_baseline' else 'Development CV only.'}
             row_start = len(all_folds)
             for fold, (a, b) in enumerate(folds):
@@ -201,13 +263,17 @@ def development(data, out, quick=False, learning=False, physics_feature=False):
                 manifest['warnings'].extend(sorted({f'{target}/{name}/fold{fold}: {w.message}' for w in fold_warnings}))
                 fit_seconds = time.perf_counter()-t
                 pred = fitted.predict(X.iloc[b])
-                all_folds.append({'target': target, 'model': name, 'fold': fold, 'fit_seconds': fit_seconds, **metrics(y[b], pred)})
+                all_folds.append({'target': target, 'model': name, 'fold': fold,
+                    'fit_rows': len(fitted.sample_indices_) if name == 'gpr' else len(a),
+                    'validation_rows': len(b), 'fit_seconds': fit_seconds, **metrics(y[b], pred)})
             group = pd.DataFrame(all_folds[row_start:])
             timing_X = pd.concat([X]*int(np.ceil(10000/len(X))), ignore_index=True).iloc[:10000]
             best.predict(timing_X.iloc[:5])
             timing = []
             for _ in range(3):
-                t = time.perf_counter(); best.predict(timing_X); timing.append(time.perf_counter()-t)
+                t = time.perf_counter()
+                batched_predict(best, timing_X)
+                timing.append(time.perf_counter()-t)
             summary = {'target': target, 'model': name, 'tuning_seconds': 0.0 if name == 'physics_baseline' else elapsed,
                 'predict_10k_seconds_median': float(np.median(timing))}
             for metric in ['r2', 'rmse', 'mape_pct', 'log10_rmse', 'log10_r2', 'fit_seconds']:
@@ -223,18 +289,8 @@ def development(data, out, quick=False, learning=False, physics_feature=False):
                 ax[1].plot(mlp.validation_scores_); ax[1].set(xlabel='Iteration', ylabel='Internal validation R2 (log target)')
                 fig.tight_layout(); fig.savefig(out/(target+'__mlp_history.png'), dpi=300); plt.close(fig)
             if learning:
-                # Fixed hyperparameters selected above: descriptive learning curve, not independent performance evidence.
-                inner = list(KFold(n_splits=3 if quick else 5, shuffle=True, random_state=SEED+1).split(X))
-                sizes = sorted(set([n for n in [25, 50, 100] if n <= min(len(a) for a,b in inner)] + [min(len(a) for a,b in inner)]))
-                for n in sizes:
-                    for fold, (a, b) in enumerate(inner):
-                        ids = np.random.default_rng(SEED+fold).permutation(a)[:n]
-                        model = clone(best)
-                        with warnings.catch_warnings(record=True) as curve_warnings:
-                            warnings.simplefilter('always', ConvergenceWarning)
-                            model.fit(X.iloc[ids], y[ids])
-                        manifest['warnings'].extend(sorted({f'{target}/{name}/learning: {w.message}' for w in curve_warnings}))
-                        lc_rows.append({'target': target, 'model': name, 'n': n, 'fold': fold, **metrics(y[b], model.predict(X.iloc[b]))})
+                lc_rows.extend(learning_rows(best, X, y, target, name, cfg['gpr_max_rows'],
+                                             curve_validation, plan, metrics, manifest['warnings']))
     summary = pd.DataFrame(summaries)
     summary.to_csv(out/'cv_summary.csv', index=False)
     pd.DataFrame(all_folds).to_csv(out/'cv_fold_metrics.csv', index=False)
@@ -244,7 +300,7 @@ def development(data, out, quick=False, learning=False, physics_feature=False):
         curve.to_csv(out/'learning_curve.csv', index=False)
         for target in TARGETS:
             fig, ax = plt.subplots(figsize=(6, 4))
-            for name, frame in curve[curve.target == target].groupby('model'):
+            for name, frame in curve[(curve.target == target) & (curve.status == 'evaluated')].groupby('model'):
                 agg = frame.groupby('n').rmse.agg(['mean', 'std'])
                 ax.errorbar(agg.index, agg['mean'], yerr=agg['std'], label=name, marker='o')
             ax.set(xscale='log', yscale='log', xlabel='Training samples', ylabel='Validation RMSE ('+('W' if target == 'Q_leak_W' else 'Pa')+')')
@@ -252,18 +308,28 @@ def development(data, out, quick=False, learning=False, physics_feature=False):
     manifest['warnings'] = sorted(set(manifest['warnings']))
     save_json(out/'manifest.json', manifest)
     print('Development complete. Selected models:', manifest['selected'], flush=True)
+    return manifest
 
 
-def finalize(data, out):
+def validate_finalize_config(manifest, config):
+    if config is not None:
+        declared, _ = settings(config)
+        if declared != manifest.get('config', {}):
+            raise ValueError('Config differs from development. Finalize must use the recorded configuration.')
+
+
+def finalize(data, out, config=None):
     if (out/'final_test_metrics.csv').exists() or (out/'final_evaluation_started.json').exists():
         raise FileExistsError('Final test already opened. Do not repeatedly evaluate or tune against it.')
     manifest = json.loads((out/'manifest.json').read_text(encoding='utf-8'))
+    validate_finalize_config(manifest, config)
     if hashlib.sha256(Path(data).read_bytes()).hexdigest() != manifest['data_sha256']:
         raise ValueError('Source data changed since development.')
     df = load_data(data)
     splits = pd.read_csv(out/'split.csv')
     test = df.set_index('case_id').loc[splits.loc[splits.split == 'test', 'case_id']].reset_index()
-    save_json(out/'final_evaluation_started.json', {'purpose': 'final holdout opened after model selection', 'selected': manifest['selected']})
+    save_json(out/'final_evaluation_started.json', {'purpose': 'final holdout opened after model selection', 'selected': manifest['selected'],
+        'config': manifest.get('config', {}), 'effective_config': manifest.get('effective_config', {})})
     rows, preds = [], pd.DataFrame({'case_id': test.case_id})
     selected_predictions = {}
     for target in TARGETS:
@@ -306,16 +372,28 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('stage', choices=['develop', 'finalize'])
     parser.add_argument('--data', type=Path, default=ROOT/'data/dataset_ai.csv')
-    parser.add_argument('--out', type=Path, default=ROOT/'outputs/pilot')
+    parser.add_argument('--out', type=Path)
+    parser.add_argument('--config', type=Path)
     parser.add_argument('--quick', action='store_true', help='Smoke run only: 3 folds, 2 candidate configurations.')
     parser.add_argument('--learning-curves', action='store_true')
-    parser.add_argument('--physics-feature', action='store_true',
+    parser.add_argument('--physics-feature', action=argparse.BooleanOptionalAction, default=None,
                         help='Append fixed log10(Q_phys/mdot_kg_h) inside each learned model Pipeline.')
+    parser.add_argument('--budget', type=int)
+    parser.add_argument('--cv-repeats', type=int)
+    parser.add_argument('--n-jobs', type=int)
+    parser.add_argument('--gpr-max-rows', type=int)
+    parser.add_argument('--estimate-time', action='store_true')
     args = parser.parse_args()
+    out = args.out or ROOT/'outputs'/('full10k' if args.config else 'pilot')
     if args.stage == 'develop':
-        development(args.data, args.out, args.quick, args.learning_curves, args.physics_feature)
+        development(args.data, out, args.quick, args.learning_curves, args.physics_feature,
+                    config=args.config, budget=args.budget, cv_repeats=args.cv_repeats,
+                    n_jobs=args.n_jobs, gpr_max_rows=args.gpr_max_rows, estimate_time=args.estimate_time)
     else:
-        finalize(args.data, args.out)
+        if args.estimate_time or args.quick or args.learning_curves or any(value is not None for value in
+                [args.physics_feature, args.budget, args.cv_repeats, args.n_jobs, args.gpr_max_rows]):
+            parser.error('finalize uses saved effective settings; only --config, --data and --out are accepted.')
+        finalize(args.data, out, config=args.config)
 
 
 if __name__ == '__main__':

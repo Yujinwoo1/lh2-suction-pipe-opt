@@ -1,0 +1,14 @@
+{
+  "preregistered_on": "2026-11-08",
+  "decision_basis": "1만 개 합본 수령 및 실행 전에 확정. physics_feature=true는 파일럿 개발 CV에서 dp_thermal 전 모델 개선을 근거로 정함. 파일럿 테스트셋 결과는 근거로 사용하지 않음.",
+  "scope": "새 합본 데이터와 outputs/full10k의 새 분할에 적용. budget 6은 실행 예산이며 50회 튜닝을 수행했다는 뜻이 아님.",
+  "physics_feature": true,
+  "seed": 2026,
+  "test_size": 0.2,
+  "stratify": "vaporized",
+  "gpr_max_rows": 3000,
+  "budget": 6,
+  "cv_splits": 5,
+  "cv_repeats": 3,
+  "n_jobs": 1
+}

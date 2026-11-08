@@ -1,0 +1,111 @@
+"""Reproducible training caps and settings, shared by CLI and saved models."""
+import json
+from pathlib import Path
+
+import numpy as np
+from scipy.stats import loguniform, randint
+from sklearn.compose import TransformedTargetRegressor
+from sklearn.model_selection import ParameterGrid, ParameterSampler
+
+SEED = 2026
+DEFAULTS = dict(physics_feature=False, seed=SEED, test_size=.2, stratify='vaporized',
+                gpr_max_rows=3000, budget=6, cv_splits=5, cv_repeats=3, n_jobs=1)
+METADATA = {'preregistered_on', 'decision_basis', 'scope'}
+
+
+def read_config(config):
+    if config is None:
+        return {}
+    if isinstance(config, (str, Path)):
+        return json.loads(Path(config).read_text(encoding='utf-8'))
+    return dict(config)
+
+
+def settings(config=None, quick=False, **overrides):
+    declared = read_config(config)
+    unknown = set(declared)-set(DEFAULTS)-METADATA
+    if unknown:
+        raise ValueError(f'Unknown configuration keys: {sorted(unknown)}')
+    result = {**DEFAULTS, **{k: v for k, v in declared.items() if k in DEFAULTS}}
+    if quick:
+        result.update(budget=2, cv_splits=3, cv_repeats=1)
+    result.update({k: v for k, v in overrides.items() if v is not None})
+    if set(result) != set(DEFAULTS):
+        raise ValueError('Unknown settings override.')
+    if result['seed'] != SEED or result['stratify'] != 'vaporized':
+        raise ValueError('Use seed 2026 and stratify=vaporized.')
+    if not isinstance(result['physics_feature'], bool):
+        raise ValueError('physics_feature must be boolean.')
+    for key in ['gpr_max_rows', 'budget', 'cv_splits', 'cv_repeats', 'n_jobs']:
+        value = result[key]
+        if isinstance(value, bool) or not isinstance(value, int) or value == 0 or (key != 'n_jobs' and value < 1):
+            raise ValueError(f'{key} must be a valid nonzero integer.')
+    if result['cv_splits'] < 2 or result['gpr_max_rows'] < 2:
+        raise ValueError('cv_splits and gpr_max_rows must be at least 2.')
+    if isinstance(result['test_size'], bool) or not 0 < result['test_size'] < 1:
+        raise ValueError('test_size must be between 0 and 1.')
+    return declared, result
+
+
+def sample_indices(n_rows, max_rows):
+    if n_rows <= max_rows:
+        return np.arange(n_rows)
+    return np.sort(np.random.default_rng(SEED).choice(n_rows, max_rows, replace=False))
+
+
+class SubsampledTargetRegressor(TransformedTargetRegressor):
+    """Cap GPR before any Pipeline preprocessing; validation is never sampled.
+
+    GPR uses a subsample because exact training costs O(n³). Other models
+    continue to use all available training rows. regressor_ remains a Pipeline
+    so existing inference and log-space sigma extraction work unchanged.
+    """
+    def __init__(self, regressor=None, *, transformer=None, func=None,
+                 inverse_func=None, check_inverse=True, max_rows=3000):
+        super().__init__(regressor=regressor, transformer=transformer, func=func,
+                         inverse_func=inverse_func, check_inverse=check_inverse)
+        self.max_rows = max_rows
+
+    def fit(self, X, y, **fit_params):
+        if not isinstance(self.max_rows, int) or self.max_rows < 2:
+            raise ValueError('max_rows must be an integer >= 2.')
+        self.sample_indices_ = sample_indices(len(X), self.max_rows)
+        subset = X.iloc[self.sample_indices_] if hasattr(X, 'iloc') else X[self.sample_indices_]
+        return super().fit(subset, np.asarray(y)[self.sample_indices_], **fit_params)
+
+
+def sampled_parameters(space, budget):
+    """Exact equal budget without silently truncating finite search spaces.
+
+    Preserve pilot finite candidates when sufficient. Larger budgets use
+    continuous alpha/learning-rate or integer tree-count ranges with the same
+    endpoints, fixed before full-data evaluation. Record every actual draw.
+    """
+    if not space:
+        return [{}]
+    distribution = dict(space)
+    if budget > len(ParameterGrid(space)):
+        for key in space:
+            values = space[key]
+            if key.endswith(('alpha', 'learning_rate_init')) and len(values) > 1:
+                distribution[key] = loguniform(min(values), max(values))
+                break
+            if key.endswith('n_estimators') and len(values) > 1:
+                distribution[key] = randint(min(values), max(values)+1)
+                break
+        else:
+            raise ValueError('Requested budget exceeds the available unique candidates.')
+    samples = list(ParameterSampler(distribution, n_iter=budget, random_state=SEED))
+    # Integer distributions may repeat; refill deterministically rather than
+    # claiming repeated configurations are unique candidates.
+    unique = {}
+    for item in samples:
+        unique.setdefault(repr(sorted(item.items())), item)
+    if len(unique) < budget:
+        for item in ParameterSampler(distribution, n_iter=budget*100, random_state=SEED):
+            unique.setdefault(repr(sorted(item.items())), item)
+            if len(unique) == budget:
+                break
+    if len(unique) != budget:
+        raise ValueError('Could not draw the requested unique tuning budget.')
+    return list(unique.values())

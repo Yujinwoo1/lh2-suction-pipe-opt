@@ -79,7 +79,7 @@ python predict.py /path/to/new_cases.csv --models outputs/pilot --output outputs
 - 튜닝 모델당 6개 후보를 사용한 파일럿입니다. 원 지시서의 50회 튜닝 전체를 수행한 것으로 표기하지 않습니다.
 - NSGA-II와 격자 기반 대리모델 최적화를 제공합니다. Q_leak에는 튜닝 없는 열침입 물리식 기준선을 함께 비교합니다. 신규 1D 솔버 검증과 참고논문 ANN 재현은 아직 포함하지 않았습니다.
 - 200개는 실험 측정값이 아닌 1D 솔버 출력입니다. 수력 근사오차를 AI 오차와 분리해야 합니다.
-- 정확 GPR은 개발 자료 3,000개 초과 시 중단합니다. 1만 개 결과를 받으면 비교 설계를 확장해야 합니다.
+- GPR은 n³ 비용 때문에 각 학습 fold와 최종 개발 학습에서 최대 3,000개를 seed 2026으로 부분표본 추출합니다. 다른 모델은 해당 학습 자료 전체를 사용합니다.
 
 세부 방법은 [파일럿 설명](docs/PILOT.md)을 참고하세요. 기존 Windows 전용 `run_local.ps1`과 로컬 Python 패키지는 이 저장소에 포함하지 않았습니다.
 
@@ -117,3 +117,24 @@ python optimize.py compare --points outputs/opt_pilot/verification_points.csv --
 `--physics-feature`는 학습 모델의 Pipeline 첫 단계에서 원본 FEATURES 6개만 선택한 뒤 `log10(Q_phys/mdot_kg_h)`를 추가합니다. Q_phys는 `physics_baseline.py`의 고정식을 그대로 사용하며, 유량 단위는 kg/h입니다. 정답 열·ID·외부에서 채운 파생값은 사용하지 않습니다. 스케일러와 다항 변환은 이 단계 이후 각 학습 fold에서 fit합니다. GPR ARD 길이척도는 7개로 맞춥니다. 옵션이 없으면 기존 6입력 동작을 유지합니다.
 
 옵션은 두 출력의 학습 모델에 적용하며 고정 `physics_baseline`에는 적용하지 않습니다. 저장된 Pipeline이 파생값을 계산하므로 `predict.py`와 `optimize.py`에 별도 전처리나 옵션이 필요하지 않습니다. 최종 홀드아웃은 평가하지 않습니다. 실험의 상세 비교 기준과 결과는 `docs/PILOT.md`를 참고하세요.
+
+## 1만 개 합본 준비 (P1-1)
+
+`configs/full10k.json`은 합본 수령 전인 2026-11-08에 고정한 설정입니다. 물리 특성은 파일럿 개발 CV만을 근거로 켰으며, 파일럿 테스트셋은 근거로 쓰지 않았습니다. 기본 budget 6, CV 5-fold × 3회, GPR 최대 3,000개, n_jobs=1입니다.
+
+```bash
+# 합본 수령 후: 먼저 비용 확인 (모델 저장 및 출력 폴더 변경 없음)
+.venv/bin/python lh2_pipeline.py develop --config configs/full10k.json --data /path/to/merged.csv --out outputs/full10k --learning-curves --estimate-time
+# 예상 시간을 확인한 뒤 개발 실행
+.venv/bin/python lh2_pipeline.py develop --config configs/full10k.json --data /path/to/merged.csv --out outputs/full10k --learning-curves
+# 모델 선정 완료 후 사용자가 별도로 승인한 최종 평가에서만, 한 번 실행
+.venv/bin/python lh2_pipeline.py finalize --config configs/full10k.json --data /path/to/merged.csv --out outputs/full10k
+```
+
+설정 우선순위는 기본값 → JSON → quick 축소값 → 명시한 CLI 인자입니다. `--budget`, `--cv-repeats`, `--n-jobs`, `--gpr-max-rows`, `--physics-feature/--no-physics-feature`로 조정한 실제 값은 원본 JSON 전체와 함께 manifest의 `effective_config`에 기록합니다. quick은 기본적으로 후보 2개, 3-fold × 1회이며 발표용 결과가 아닙니다. finalize는 저장된 유효 설정과 모델을 사용하고 다른 JSON은 거부합니다. 이번 P1-1 작업에서 finalize는 실행하지 않았습니다.
+
+GPR 전처리도 부분표본에만 fit하며 `gpr_subsamples.csv`에 최종 개발 학습과 각 CV 학습 fold의 case_id를 저장합니다. 공통 CV 검증 행은 모두 평가합니다. `status`가 있으면 정확히 `converged`인 행만 사용하고 제외 수·ID를 감사에 기록합니다. 8,000–12,000행 자료에서 회귀 대상의 기화 비율이 파일럿 6%와 3%p 초과 차이면 경고하며 비율 자체를 이유로 거부하지 않습니다.
+
+학습 곡선은 개발 자료 안의 고정 20% 검증 분할에서 평가합니다. 요청한 25/50/100/200/400/800/1600/3200/개발 전체 크기 중 개발 행 수 이하만 표에 넣으며, 크기마다 학습 풀에서 5회 무작위 추출합니다. 검증 행 때문에 학습할 수 없는 크기는 `skipped_validation_holdout`, GPR 한도 초과는 `skipped_gpr_max_rows`로 표시합니다. 사용 가능한 학습 풀 전체 크기도 별도 실측점으로 넣습니다. 분할과 표본 ID는 `learning_curve_split.csv`, `learning_curve_samples.csv`에 저장합니다. 최종 홀드아웃은 사용하지 않습니다.
+
+시간 추정은 출력별·모델별 후보 하나를 개발 fold 하나에서 학습한 실측값으로 탐색, refit, 보고 CV, 선택한 학습 곡선, 1만 행 예측 벤치마크 시간을 추정합니다. 후보마다 비용이 다르고 병렬 메모리 경합·I/O·그림 비용은 반영하지 못하므로 대략적인 예산 확인용입니다. 합본이 오면 합본 자체로 다시 추정해야 합니다.
