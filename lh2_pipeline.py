@@ -21,6 +21,7 @@ import joblib
 import sklearn
 from scipy.special import exp10
 from sklearn.base import clone
+from physics_baseline import PhysicsBaseline, physics_heat_leak
 from sklearn.compose import TransformedTargetRegressor
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.gaussian_process import GaussianProcessRegressor
@@ -48,7 +49,6 @@ def rigid_pressure(df):
     # D: mm -> m; mass flow: kg/h -> kg/s. rho cancels algebraically.
     area = np.pi * (df.D_mm.to_numpy() / 1000)**2 / 4
     return df.L_m.to_numpy() * (np.pi * df.mdot_kg_h.to_numpy() / 3600) * (2*np.pi*df.f_Hz.to_numpy()) / area
-
 
 def load_data(path):
     df = pd.read_csv(path)
@@ -88,14 +88,16 @@ def audit(df, out):
                          'relative_error_pct': 100*abs(p/df.dp_design_Pa-1),
                          'constraint_mismatch': (p > 48300) != (df.vaporized == 1)})
     rows.to_csv(out/'physics_audit.csv', index=False)
-    save_json(out/'data_audit.json', {'rows': len(df), 'vaporized': int(df.vaporized.sum()),
+    heat_error = 100*np.abs(physics_heat_leak(df)/df.Q_leak_W.to_numpy()-1)
+    save_json(out/'data_audit.json', {'physics_baseline_mean_relative_error_pct': float(heat_error.mean()),
+        'physics_baseline_max_relative_error_pct': float(heat_error.max()), 'rows': len(df), 'vaporized': int(df.vaporized.sum()),
         'boundary_rows': int(df.dp_design_Pa.between(38300, 58300).sum()),
         'hydraulic_only_mean_error_pct': float(rows.relative_error_pct.mean()),
         'hydraulic_only_max_error_pct': float(rows.relative_error_pct.max()),
         'hydraulic_only_constraint_mismatches': int(rows.constraint_mismatch.sum())})
 
 
-def candidates(quick=False):
+def candidates(quick=False, target=None):
     def wrapped(steps):
         return TransformedTargetRegressor(regressor=Pipeline(steps), func=np.log10, inverse_func=exp10)
     prefix = 'regressor__model__'
@@ -114,6 +116,8 @@ def candidates(quick=False):
                  max_iter=1000 if quick else 3000, early_stopping=True, validation_fraction=.2, n_iter_no_change=40))]),
             {prefix+'hidden_layer_sizes': [(32,), (64,), (32, 32), (64, 32)], prefix+'activation': ['tanh', 'relu'],
              prefix+'alpha': [.0001, .001, .01], prefix+'learning_rate_init': [.001, .003]})}
+    if target == 'Q_leak_W':
+        models['physics_baseline'] = (PhysicsBaseline(), {})
     return models
 
 
@@ -158,8 +162,8 @@ def development(data, out, quick=False, learning=False):
     all_folds, summaries, lc_rows = [], [], []
     for target in TARGETS:
         y = df.iloc[train][target].to_numpy()
-        for name, (est, space) in candidates(quick).items():
-            print(f'Tuning {target}: {name}', flush=True)
+        for name, (est, space) in candidates(quick, target=target).items():
+            print(f"{'Evaluating fixed formula' if name == 'physics_baseline' else 'Tuning'} {target}: {name}", flush=True)
             # GPR cap applies only to development data and is recorded explicitly.
             if name == 'gpr' and len(X) > 3000:
                 raise ValueError('This pilot pipeline limits exact GPR to 3000 development rows. Design a matched-sample study before scaling up.')
@@ -176,7 +180,10 @@ def development(data, out, quick=False, learning=False):
             key = target+'__'+name
             joblib.dump(best, out/(key+'.joblib'))
             pd.DataFrame(search.cv_results_).to_csv(out/(key+'__search.csv'), index=False)
-            manifest['models'][key] = {'parameters': search.best_params_, 'tuning_seconds': elapsed}
+            manifest['models'][key] = {'parameters': search.best_params_, 'tuning_seconds': 0.0 if name == 'physics_baseline' else elapsed,
+                'tuning_candidates': 0 if not space else len(sampled),
+                'evaluation_seconds': elapsed,
+                'note': 'Fixed P0-2 formula; no tuning or learned parameters.' if name == 'physics_baseline' else 'Development CV only.'}
             row_start = len(all_folds)
             for fold, (a, b) in enumerate(folds):
                 fitted = clone(best)
@@ -194,7 +201,7 @@ def development(data, out, quick=False, learning=False):
             timing = []
             for _ in range(3):
                 t = time.perf_counter(); best.predict(timing_X); timing.append(time.perf_counter()-t)
-            summary = {'target': target, 'model': name, 'tuning_seconds': elapsed,
+            summary = {'target': target, 'model': name, 'tuning_seconds': 0.0 if name == 'physics_baseline' else elapsed,
                 'predict_10k_seconds_median': float(np.median(timing))}
             for metric in ['r2', 'rmse', 'mape_pct', 'log10_rmse', 'log10_r2', 'fit_seconds']:
                 summary[metric+'_mean'] = group[metric].mean()

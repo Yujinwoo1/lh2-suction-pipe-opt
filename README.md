@@ -62,6 +62,7 @@ python predict.py /path/to/new_cases.csv --models outputs/pilot --output outputs
 | 파일 | 역할 |
 |---|---|
 | `lh2_pipeline.py` | 데이터 감사, 고정 분할, 모델 비교, 최종 평가 |
+| `physics_baseline.py` | 상수 튜닝 없는 열침입 물리식 기준선 |
 | `predict.py` | 저장된 선정 모델로 새 설계 조건 예측 |
 | `summarize_results.py` | 기본 실험 결과를 `outputs/pilot/RESULTS.md`로 요약 |
 | `tests/test_pipeline.py` | 파일럿 데이터 기반 검증 5개 |
@@ -76,7 +77,7 @@ python predict.py /path/to/new_cases.csv --models outputs/pilot --output outputs
 - 개발 160개 / 테스트 40개, seed 2026, 개발 CV 5-fold × 3회입니다.
 - 선형회귀, 다항 Ridge, RF, GPR, MLP를 비교하며 두 출력을 각각 log10 공간에서 학습합니다.
 - 튜닝 모델당 6개 후보를 사용한 파일럿입니다. 원 지시서의 50회 튜닝 전체를 수행한 것으로 표기하지 않습니다.
-- NSGA-II와 격자 기반 대리모델 최적화를 제공합니다. 신규 1D 솔버 검증, 참고논문 ANN 재현, 열침입 물리 기준선은 아직 포함하지 않았습니다.
+- NSGA-II와 격자 기반 대리모델 최적화를 제공합니다. Q_leak에는 튜닝 없는 열침입 물리식 기준선을 함께 비교합니다. 신규 1D 솔버 검증과 참고논문 ANN 재현은 아직 포함하지 않았습니다.
 - 200개는 실험 측정값이 아닌 1D 솔버 출력입니다. 수력 근사오차를 AI 오차와 분리해야 합니다.
 - 정확 GPR은 개발 자료 3,000개 초과 시 중단합니다. 1만 개 결과를 받으면 비교 설계를 확장해야 합니다.
 
@@ -95,3 +96,13 @@ python optimize.py compare --points outputs/opt_pilot/verification_points.csv --
 `outputs/opt_pilot/`에 `pareto_S*.csv`, `grid_pareto_S*.csv`, `hv_summary.csv`, `T3_candidates.csv`, `verification_points.csv`, 여섯 입력 열만 담은 `verification_inputs.csv`, `F4.png`, 설정과 후보 정의를 기록한 `optimization.json`을 저장합니다. HV는 격자 ideal/nadir로 공통 정규화하고 기준점 (1.1, 1.1, 1.1)을 사용합니다. 격자와 NSGA-II를 합친 비지배 전선에서 A(열침입 최소), B(정규화 ideal 거리 최소), C(외경 최소), 추가 최대 6개를 선택합니다. 극점이 겹치면 A/B/C가 같은 설계일 수 있습니다.
 
 솔버 결과는 `verification_points.csv`의 `point_id`를 그대로 보존한 `point_id,Q_leak_W,dp_design_Pa` 열로 전달받습니다. 입력 전용 파일에는 ID가 없으므로 원래 행 순서와 점 목록의 대응을 유지하세요. `compare`는 ID로 결합하여 부호 있는 오차율 100×(예측/솔버−1), 절대 오차율, 제약 일치 여부를 `T4_comparison.csv`로 저장합니다. **대리모델 Pareto와 HV는 솔버 검증 결과가 아닙니다.** 비GPR의 불확실성은 NaN이며 GPR σ는 log10 공간 값입니다.
+
+## 열침입 물리식 기준선 (P0-2)
+
+```bash
+.venv/bin/python lh2_pipeline.py develop --out outputs/pilot_v2
+```
+
+기존 `outputs/pilot`을 보존하고, Q_leak 비교에 `physics_baseline`을 추가합니다. 식과 상수는 `docs/codex_tasks.md` P0-2 그대로이며 튜닝하지 않습니다. 입력은 기존 FEATURES 6개이고 전도율은 `10**log10_k_MLI`로 복원합니다. 다른 모델과 동일한 개발/최종 테스트 분할 및 CV 검증 fold에서 평가합니다. 이 명령은 최종 홀드아웃 성능을 계산하지 않습니다.
+
+`cv_summary.csv`와 `cv_fold_metrics.csv`에 동일 지표로 기록하고, `data_audit.json`에는 전체 자료의 물리식 평균·최대 절대 상대오차(%)를 별도 저장합니다. 전체 200개 감사 수치와 개발 CV 수치를 혼합하지 않습니다. Q_leak는 이 파일럿에서 물리식으로 충분하며 AI 비교의 실질적인 초점은 dp_thermal입니다. 최종 일반화 성능은 아직 평가하지 않았습니다.
