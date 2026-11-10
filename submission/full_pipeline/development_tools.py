@@ -1,4 +1,4 @@
-"""Development-only learning curves and approximate runtime estimates."""
+"""테스트셋을 남겨 두고 개발 자료로 학습 곡선과 예상 실행 시간을 확인함."""
 import time
 import warnings
 
@@ -65,10 +65,8 @@ def fit_validation(estimator,X,y,a,b):
 
 
 def estimate_runtime(models_by_target, X, targets, folds, cfg, learning=False, labels=None):
-    """One candidate/fold fit; estimate actual scheduled search/report waves.
-
-    Solo-fit timing cannot measure concurrent CPU/RAM contention. Memory/CPU
-    admission is shared with execution; refit/curves/benchmarks remain serial.
+    """후보 하나와 fold 하나의 실측 시간으로 전체 실행 시간을 추정함.
+    단독 학습 기준이라 동시 실행 시 CPU·메모리 경합은 반영하지 못함.
     """
     import math
     from execution_plan import resource_plan,candidate_parameters,search_wall_seconds

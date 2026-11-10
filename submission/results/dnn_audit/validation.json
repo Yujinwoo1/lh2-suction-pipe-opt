@@ -1,0 +1,56 @@
+{
+  "existing_results_files": 57,
+  "existing_results_changed": [],
+  "protected_python_files_unchanged": 14,
+  "user_confirmed_comment_edits_preserved": [
+    "full_pipeline/lh2_pipeline.py"
+  ],
+  "user_edited_pipeline_logic_matches_HEAD": true,
+  "original_T1_bytes_preserved": true,
+  "development_rows": 8000,
+  "test_id_overlap": 0,
+  "cv_folds": 5,
+  "actual_candidates_per_target": 21,
+  "total_experiment_fold_fits": 210,
+  "experiment_seconds": 1292.9761482500005,
+  "final_holdout_used": false,
+  "py_compile_passed": true,
+  "unittest_cases": 55,
+  "new_dnn_tests_passed": 6,
+  "unittest_existing_hash_subtest_failures": [
+    "test_copied_source_hashes (test_submission_package.SubmissionPackageTests) (file='full_pipeline/LH2_pilot.ipynb')",
+    "test_copied_source_hashes (test_submission_package.SubmissionPackageTests) (file='full_pipeline/README.md')",
+    "test_copied_source_hashes (test_submission_package.SubmissionPackageTests) (file='full_pipeline/ann_reference.py')",
+    "test_copied_source_hashes (test_submission_package.SubmissionPackageTests) (file='full_pipeline/artifact_state.py')",
+    "test_copied_source_hashes (test_submission_package.SubmissionPackageTests) (file='full_pipeline/benchmark_gpr.py')",
+    "test_copied_source_hashes (test_submission_package.SubmissionPackageTests) (file='full_pipeline/benchmark_native_gpr.py')",
+    "test_copied_source_hashes (test_submission_package.SubmissionPackageTests) (file='full_pipeline/development_tools.py')",
+    "test_copied_source_hashes (test_submission_package.SubmissionPackageTests) (file='full_pipeline/docs/PILOT.md')",
+    "test_copied_source_hashes (test_submission_package.SubmissionPackageTests) (file='full_pipeline/execution_plan.py')",
+    "test_copied_source_hashes (test_submission_package.SubmissionPackageTests) (file='full_pipeline/full10k_runner.py')",
+    "test_copied_source_hashes (test_submission_package.SubmissionPackageTests) (file='full_pipeline/hydraulics.py')",
+    "test_copied_source_hashes (test_submission_package.SubmissionPackageTests) (file='full_pipeline/lh2_pipeline.py')",
+    "test_copied_source_hashes (test_submission_package.SubmissionPackageTests) (file='full_pipeline/make_notebook.py')",
+    "test_copied_source_hashes (test_submission_package.SubmissionPackageTests) (file='full_pipeline/optimize.py')",
+    "test_copied_source_hashes (test_submission_package.SubmissionPackageTests) (file='full_pipeline/physics_baseline.py')",
+    "test_copied_source_hashes (test_submission_package.SubmissionPackageTests) (file='full_pipeline/plan_walltime.py')",
+    "test_copied_source_hashes (test_submission_package.SubmissionPackageTests) (file='full_pipeline/predict.py')",
+    "test_copied_source_hashes (test_submission_package.SubmissionPackageTests) (file='full_pipeline/summarize_results.py')",
+    "test_copied_source_hashes (test_submission_package.SubmissionPackageTests) (file='full_pipeline/training_support.py')"
+  ],
+  "notebook": {
+    "executed_code_cells": 16,
+    "added_cells": 2,
+    "existing_sources_and_outputs_preserved": true,
+    "new_comparison_matches_csv": true,
+    "existing_numeric_max_errors": {
+      "final_test_metrics": 2.4346161353605567e-07,
+      "hydraulic_metrics": 4.223061900177072e-10,
+      "reverification_Q_leak_W": 4.24509993129929e-12,
+      "reverification_dp_thermal_Pa": 3.2910318914503023e-10,
+      "reverification_dp_design_Pa": 1.2566703233574117e-09,
+      "hv_ratio": 3.931739378515431e-10
+    },
+    "finalize_executed": false
+  }
+}

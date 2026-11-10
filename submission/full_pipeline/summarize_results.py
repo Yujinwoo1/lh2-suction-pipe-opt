@@ -1,4 +1,4 @@
-"""Render reports exclusively from saved results; never fit or reopen raw test data."""
+"""저장된 결과만 읽어 보고서를 작성함. 재학습이나 테스트셋 재평가는 하지 않음."""
 import argparse
 import json
 from pathlib import Path

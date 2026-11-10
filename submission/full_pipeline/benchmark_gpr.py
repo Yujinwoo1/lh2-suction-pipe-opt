@@ -1,4 +1,4 @@
-"""Synthetic timing only. Never trains solver surrogates or saves models."""
+"""정답 없는 입력은 합성 응답의 비용 측정에만 사용함. 모델,합성 정답은 저장하지 않음."""
 import argparse
 import hashlib
 import json
@@ -21,8 +21,7 @@ from training_support import sample_indices, sampled_parameters, settings
 
 def benchmark_inputs(path):
     raw = pd.read_csv(path)
-    # Explicit projection prevents any labels in an accidental solver CSV from
-    # becoming benchmark features. Synthetic responses never go back to the CSV.
+    # 솔버 CSV를 넣어도 정답이 입력에 섞이지 않도록 원본 입력 열만 선택함.
     inputs = validate_inputs(raw[list(p.BOUNDS)])[p.FEATURES]
     if len(inputs) < 3000:
         raise ValueError('Timing benchmark requires at least 3000 original input rows.')
@@ -44,7 +43,7 @@ def worker(path, kernel_index, threads):
         fit_seconds = time.perf_counter()-started
         fit_peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024
         started = time.perf_counter()
-        # Repeat original design inputs; no invented solver labels or designs.
+        # 예측 비용만 비교하려고 기존 입력을 반복함.
         for start in range(0, 100000, 1000):
             positions = np.arange(start, min(start+1000, 100000)) % len(X)
             estimator.predict(X.iloc[positions])
@@ -57,15 +56,14 @@ def worker(path, kernel_index, threads):
 
 
 def workload_table(measured, others, n_rows, cfg):
-    """Sequential proxy estimates, not evidence from actual merged solver y."""
+    """직렬 실행을 가정한 비용 추정이며 실제 합본의 학습시간은 아님."""
     rows=[]
     validation_rows = n_rows*(1-cfg['test_size'])/cfg['cv_splits']
-    # Candidate kernel optimizer costs can differ greatly: expose range.
+    # 커널별 수렴 시간이 달라 평균과 범위를 함께 남김.
     for budget in [6,20,50]:
         per_kernel=[]
         for row in measured:
-            # Two independent outputs: budget*15 search, 15 reporting CV,
-            # one refit, three 10k prediction benchmark passes per output.
+            # 출력별 탐색·보고 CV·refit·예측 측정을 포함해 비용 누락을 줄임.
             fit_count=2*(budget*15+15+1)
             predict_seconds=2*((budget*15+15)*validation_rows/100000+.3)*row['predict_100k_seconds']
             per_kernel.append(fit_count*row['fit_seconds']+predict_seconds)
@@ -88,7 +86,7 @@ def workload_table(measured, others, n_rows, cfg):
 
 
 def run(path, out, threads=1):
-    # Validate before creating any result directory.
+    # 잘못된 입력으로 빈 결과 폴더가 남지 않도록 먼저 검사함.
     X,y,ids=benchmark_inputs(path)
     out.mkdir(parents=True,exist_ok=False)
     pd.DataFrame({'source_row':ids}).to_csv(out/'sample_rows.csv',index=False)
@@ -98,15 +96,14 @@ def run(path, out, threads=1):
         completed=subprocess.run([sys.executable,str(Path(__file__).resolve()),'--worker',str(index),
                                   '--inputs',str(path.resolve()),'--threads',str(threads)],
                                  check=True, text=True, stdout=subprocess.PIPE)
-        # Warnings go directly to stderr, never hidden or discarded.
+        # 수렴 상태를 확인할 수 있도록 경고를 stderr에 남김.
         row=json.loads(completed.stdout)
         measured.append(row)
         pd.DataFrame(measured).to_csv(out/'gpr_timing.csv',index=False)
         print(json.dumps(row),flush=True)
     declared,cfg=settings(p.ROOT/'configs/full10k.json')
     cfg['finalize_pressure_comparisons']=declared.get('finalize_pressure_comparisons',[])
-    # Measure one candidate on a synthetic development fold for each other AI
-    # model rather than pretending its time is known from GPR timing.
+    # 다른 모델의 비용을 GPR 시간으로 대신하지 않고 모델별로 따로 측정함.
     train,_=p.train_test_split(np.arange(len(X)),test_size=.2,random_state=2026)
     fold,_=p.train_test_split(train,test_size=.2,random_state=2026)
     val=np.setdiff1d(train,fold)

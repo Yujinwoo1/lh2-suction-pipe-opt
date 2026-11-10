@@ -1,0 +1,13 @@
+{
+  "python": "3.10.12",
+  "packages": {
+    "numpy": "2.2.6",
+    "pandas": "2.3.3",
+    "scikit-learn": "1.7.2",
+    "scipy": "1.15.3",
+    "threadpoolctl": "3.8.0"
+  },
+  "seed": 2026,
+  "blas_threads": 1,
+  "script_sha256": "0a8ae1e94453309223a4696359122324214b6dc61cc95931b9e3e4c708f98bfa"
+}

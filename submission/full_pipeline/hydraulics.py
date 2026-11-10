@@ -1,4 +1,6 @@
-"""Development-only hydraulic ratio correction and shared inference helpers."""
+"""수력/강체 압력 비율은 약 1.74–1.85로 달라 1.8 고정값과 GPR 보정을 비교함.
+
+제약 경계에서는 이 차이가 안전 판정에 영향을 주므로 개발 자료로 비율을 학습함."""
 import argparse
 import hashlib
 import json
@@ -77,7 +79,8 @@ def hydraulic_fold(model,X,target,a,b,thermal_values,thermal_estimator,thermal_p
 
 def hydraulic_cv(dev,features,folds,thermal_estimator,rigid,out,max_rows=3000,
                  thermal_oof=None,warning_records=None,n_jobs=1,blas_threads=None):
-    """Paired cross-fit ratios and thermal estimates on development rows only."""
+    """수력 보정의 차이만 비교하도록 같은 개발 fold의 열적 압력 예측을 사용하고,
+    테스트셋은 보정 모델 학습이나 비교에 사용하지 않는다"""
     warning_records=[] if warning_records is None else warning_records
     X=dev[features]; target=dev.dp_hyd_Pa.to_numpy()/dev.dp_rigid_Pa.to_numpy()
     model=ratio_estimator(max_rows)
@@ -107,7 +110,7 @@ def hydraulic_cv(dev,features,folds,thermal_estimator,rigid,out,max_rows=3000,
         row['unique_boundary_mismatch_cases']=int(predictions.loc[
             predictions.pressure_actual_Pa.between(38300,58300)&
             ((predictions[f'pressure_{method}_Pa']>48300)!=(predictions.pressure_actual_Pa>48300)), 'case_id'].nunique())
-        # Control calculation isolates hydraulic approximation from thermal AI.
+        # 열적 압력의 정답을 넣어 수력 근사에서 생긴 오차를 따로 확인함.
         control=pressure_metrics(predictions.pressure_actual_Pa,
                                  predictions.thermal_actual_Pa+ratios*predictions.rigid_Pa)
         row['true_thermal_boundary_mismatch_count']=control['boundary_mismatch_count']

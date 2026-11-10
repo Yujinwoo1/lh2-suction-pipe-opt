@@ -1,14 +1,11 @@
-"""Fixed heat-leak reference from docs/codex_tasks.md P0-2."""
+"""Q_leak 물리식 기준선으로 열침입에 AI가 필요한지 비교함."""
 import numpy as np
 from sklearn.base import BaseEstimator, RegressorMixin, TransformerMixin
 
 
 def physics_heat_leak(df):
-    """Fixed P0-2 formula in docs/codex_tasks.md; no fitted constants.
-
-    Uses only FEATURES, including log10 conductivity; ignores IDs/solver outputs.
-    Wall resistance is neglected; wall thickness=0.0015 m, h=5 W/m²K,
-    hot/cold temperatures=300/23.6 K.
+    """AI와 비교할 기준이므로 상수를 학습하지 않고 원통 전도·외부 대류식을 사용함.
+    벽의 열저항은 무시하며, 원본 입력 6개만 사용함.
     """
     r_i = df['D_mm'].to_numpy(dtype=float)/2000
     r_w = r_i + 0.0015
@@ -21,7 +18,7 @@ def physics_heat_leak(df):
 
 
 class PhysicsBaseline(RegressorMixin, BaseEstimator):
-    """Parameter-free heat-leak reference; fit intentionally learns nothing."""
+    """물리식 자체와 비교하기 위해 fit에서 상수를 조정하지 않음."""
     def fit(self, X, y=None):
         return self
 
@@ -33,10 +30,8 @@ PHYSICS_FEATURE_NAME = 'log10_Q_phys_per_mdot'
 
 
 class PhysicsFeatureTransformer(TransformerMixin, BaseEstimator):
-    """Append log10(Q_phys / mdot_kg_h) using only the six source features.
-
-    Stateless: no target or fitted constants are used. Selecting source columns
-    also prevents any supplied target/ID/derived columns from entering models.
+    """log10(Q_phys/mdot_kg_h)로 유량당 열 유입을 입력에 반영함.
+    원본 입력 6개로만 계산해 정답이나 ID가 모델에 들어가는 것을 막음.
     """
     def __init__(self, features):
         self.features = features

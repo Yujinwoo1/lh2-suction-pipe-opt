@@ -1,4 +1,4 @@
-"""Native-BLAS GPR timing only; synthetic y, no model/label persistence."""
+"""BLAS 기본 스레드 수에서 GPR 비용만 측정함. 합성 응답과 학습 모델은 저장하지 않음."""
 import argparse
 import hashlib
 import json
@@ -29,7 +29,7 @@ def measure(path,n_rows):
     pools=threadpool_info()
     available=available_memory_mib()
     started=time.perf_counter()
-    # Deliberately no threadpool_limits or worker backend limit here.
+    # BLAS 기본 동작을 측정하려고 별도 스레드 제한을 두지 않음.
     model.fit(X.iloc[ids],y[ids])
     elapsed=time.perf_counter()-started
     return dict(kernel='Matern_2.5',fit_rows=n_rows,fit_calls=1,fit_seconds=elapsed,

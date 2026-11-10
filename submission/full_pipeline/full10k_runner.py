@@ -1,4 +1,4 @@
-"""Resumable unattended workflow. Finalize is attempted at most once."""
+"""중단된 단계부터 이어 실행하되 finalize는 시작 기록이 있으면 재시도하지 않음"""
 import argparse
 from datetime import datetime
 import fcntl
@@ -106,7 +106,7 @@ def run(data,root,quick=False):
                 if entry.get('status')=='complete':raise RuntimeError(f'Completed {stage} artifacts are missing/corrupt; refusing silent replacement.')
                 if stage=='finalize' and final_retry_forbidden(root,state):
                     raise RuntimeError('Final holdout was already started; automatic finalize retry is forbidden, including a failed/interrupted attempt.')
-                # Recover completed stage output left before promotion/checkpoint.
+                # 상태 기록 직전에 중단됐을 수 있어 완료된 산출물을 먼저 확인함
                 prior=entry.get('work_dir')
                 if stage!='finalize' and prior and verify_receipt(prior,RECEIPTS[stage]):
                     destination=root/DESTINATIONS[stage];destination.parent.mkdir(parents=True,exist_ok=True)

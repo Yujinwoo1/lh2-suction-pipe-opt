@@ -1,4 +1,7 @@
-"""Surrogate Pareto search and solver verification handoff; not solver validation."""
+"""열침입 Q_leak와 외경 D_o를 줄이면서 dp_design ≤ 48.3 kPa인 후보를 찾기 위한 탐색.
+
+구현에서는 전체 압력도 목적에 포함해 세 목적을 최소화한다.
+기준·진공 열화·고부하 시나리오를 나눠 운전 조건에 따른 설계 차이를 비교함."""
 import argparse
 import json
 from pathlib import Path
@@ -80,7 +83,8 @@ def design_problem(models, scenario):
 
 
 def pareto(frame):
-    """Feasible nondominated surrogate predictions, not solver ground truth."""
+    """대리모델에서 제약을 만족하는 비지배 후보만 남긴다.
+    솔버 검증과 구분하기 위해 예측 기준의 Pareto로 다룬다."""
     from pymoo.util.nds.non_dominated_sorting import NonDominatedSorting
     feasible = frame.loc[frame.dp_design_pred_Pa <= 48300].reset_index(drop=True)
     if feasible.empty:
@@ -95,7 +99,8 @@ def normalize(values, ideal, nadir):
 
 
 def candidates(front):
-    """B minimizes distance to ideal in min-max normalized Pareto objectives."""
+    """B는 Pareto 목적값을 0–1로 정규화한 뒤 이상점까지의 거리가 가장 가까운 점으로 정의함.
+    단위가 다른 세 목적을 같은 척도에서 비교하기 위한 기준임."""
     front = front.drop_duplicates(['D_mm', 't_ins_mm']).reset_index(drop=True)
     values = front[OBJECTIVES].to_numpy()
     scaled = normalize(values, values.min(axis=0), values.max(axis=0))

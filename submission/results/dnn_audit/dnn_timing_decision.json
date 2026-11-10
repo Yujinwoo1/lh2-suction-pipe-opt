@@ -1,0 +1,548 @@
+{
+  "seed": 2026,
+  "requested_candidates": 50,
+  "maximum_seconds": 5400,
+  "timing_safety_factor": 1.25,
+  "selection_metric": "minimum mean CV log10 RMSE",
+  "interpretation": "DNN model-family comparison inspired by [9], not paper reproduction",
+  "candidates": [
+    {
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        256,
+        256,
+        256
+      ],
+      "regressor__model__learning_rate_init": 0.001,
+      "regressor__model__alpha": 0.0001,
+      "regressor__model__batch_size": 64
+    },
+    {
+      "regressor__model__learning_rate_init": 0.0003,
+      "regressor__model__hidden_layer_sizes": [
+        64,
+        64,
+        64,
+        64
+      ],
+      "regressor__model__batch_size": 64,
+      "regressor__model__alpha": 0.0001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.001,
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        128,
+        128,
+        64
+      ],
+      "regressor__model__batch_size": 64,
+      "regressor__model__alpha": 0.001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.0003,
+      "regressor__model__hidden_layer_sizes": [
+        128,
+        128,
+        128
+      ],
+      "regressor__model__batch_size": 256,
+      "regressor__model__alpha": 0.001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.001,
+      "regressor__model__hidden_layer_sizes": [
+        64,
+        64,
+        64
+      ],
+      "regressor__model__batch_size": 128,
+      "regressor__model__alpha": 0.01
+    },
+    {
+      "regressor__model__learning_rate_init": 0.001,
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        128,
+        64
+      ],
+      "regressor__model__batch_size": 256,
+      "regressor__model__alpha": 0.01
+    },
+    {
+      "regressor__model__learning_rate_init": 0.003,
+      "regressor__model__hidden_layer_sizes": [
+        128,
+        128,
+        128
+      ],
+      "regressor__model__batch_size": 64,
+      "regressor__model__alpha": 0.0001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.001,
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        128,
+        64
+      ],
+      "regressor__model__batch_size": 128,
+      "regressor__model__alpha": 0.0001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.003,
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        256,
+        256
+      ],
+      "regressor__model__batch_size": 128,
+      "regressor__model__alpha": 0.001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.0003,
+      "regressor__model__hidden_layer_sizes": [
+        64,
+        64,
+        64,
+        64
+      ],
+      "regressor__model__batch_size": 64,
+      "regressor__model__alpha": 0.001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.0003,
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        256,
+        256
+      ],
+      "regressor__model__batch_size": 256,
+      "regressor__model__alpha": 0.001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.001,
+      "regressor__model__hidden_layer_sizes": [
+        64,
+        64,
+        64,
+        64
+      ],
+      "regressor__model__batch_size": 128,
+      "regressor__model__alpha": 0.0001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.001,
+      "regressor__model__hidden_layer_sizes": [
+        64,
+        64,
+        64,
+        64
+      ],
+      "regressor__model__batch_size": 256,
+      "regressor__model__alpha": 0.001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.001,
+      "regressor__model__hidden_layer_sizes": [
+        128,
+        128,
+        128,
+        128
+      ],
+      "regressor__model__batch_size": 64,
+      "regressor__model__alpha": 0.001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.0003,
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        128,
+        128,
+        64
+      ],
+      "regressor__model__batch_size": 128,
+      "regressor__model__alpha": 0.001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.003,
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        256,
+        256
+      ],
+      "regressor__model__batch_size": 128,
+      "regressor__model__alpha": 0.01
+    },
+    {
+      "regressor__model__learning_rate_init": 0.003,
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        128,
+        64
+      ],
+      "regressor__model__batch_size": 256,
+      "regressor__model__alpha": 0.01
+    },
+    {
+      "regressor__model__learning_rate_init": 0.0003,
+      "regressor__model__hidden_layer_sizes": [
+        128,
+        128,
+        128,
+        128
+      ],
+      "regressor__model__batch_size": 64,
+      "regressor__model__alpha": 0.0001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.0003,
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        128,
+        64
+      ],
+      "regressor__model__batch_size": 64,
+      "regressor__model__alpha": 0.01
+    },
+    {
+      "regressor__model__learning_rate_init": 0.0003,
+      "regressor__model__hidden_layer_sizes": [
+        64,
+        64,
+        64
+      ],
+      "regressor__model__batch_size": 128,
+      "regressor__model__alpha": 0.0001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.001,
+      "regressor__model__hidden_layer_sizes": [
+        128,
+        128,
+        128
+      ],
+      "regressor__model__batch_size": 256,
+      "regressor__model__alpha": 0.001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.003,
+      "regressor__model__hidden_layer_sizes": [
+        128,
+        128,
+        128,
+        128
+      ],
+      "regressor__model__batch_size": 256,
+      "regressor__model__alpha": 0.0001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.001,
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        256,
+        256,
+        256
+      ],
+      "regressor__model__batch_size": 64,
+      "regressor__model__alpha": 0.01
+    },
+    {
+      "regressor__model__learning_rate_init": 0.001,
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        256,
+        256
+      ],
+      "regressor__model__batch_size": 256,
+      "regressor__model__alpha": 0.01
+    },
+    {
+      "regressor__model__learning_rate_init": 0.001,
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        256,
+        256,
+        256
+      ],
+      "regressor__model__batch_size": 128,
+      "regressor__model__alpha": 0.01
+    },
+    {
+      "regressor__model__learning_rate_init": 0.003,
+      "regressor__model__hidden_layer_sizes": [
+        128,
+        128,
+        128,
+        128
+      ],
+      "regressor__model__batch_size": 256,
+      "regressor__model__alpha": 0.01
+    },
+    {
+      "regressor__model__learning_rate_init": 0.0003,
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        256,
+        256,
+        256
+      ],
+      "regressor__model__batch_size": 256,
+      "regressor__model__alpha": 0.01
+    },
+    {
+      "regressor__model__learning_rate_init": 0.003,
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        128,
+        128,
+        64
+      ],
+      "regressor__model__batch_size": 256,
+      "regressor__model__alpha": 0.001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.001,
+      "regressor__model__hidden_layer_sizes": [
+        128,
+        128,
+        128,
+        128
+      ],
+      "regressor__model__batch_size": 64,
+      "regressor__model__alpha": 0.01
+    },
+    {
+      "regressor__model__learning_rate_init": 0.001,
+      "regressor__model__hidden_layer_sizes": [
+        128,
+        128,
+        128
+      ],
+      "regressor__model__batch_size": 256,
+      "regressor__model__alpha": 0.0001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.003,
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        256,
+        256
+      ],
+      "regressor__model__batch_size": 256,
+      "regressor__model__alpha": 0.0001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.003,
+      "regressor__model__hidden_layer_sizes": [
+        64,
+        64,
+        64,
+        64
+      ],
+      "regressor__model__batch_size": 128,
+      "regressor__model__alpha": 0.001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.003,
+      "regressor__model__hidden_layer_sizes": [
+        64,
+        64,
+        64,
+        64
+      ],
+      "regressor__model__batch_size": 64,
+      "regressor__model__alpha": 0.01
+    },
+    {
+      "regressor__model__learning_rate_init": 0.003,
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        256,
+        256
+      ],
+      "regressor__model__batch_size": 256,
+      "regressor__model__alpha": 0.001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.003,
+      "regressor__model__hidden_layer_sizes": [
+        128,
+        128,
+        128
+      ],
+      "regressor__model__batch_size": 64,
+      "regressor__model__alpha": 0.01
+    },
+    {
+      "regressor__model__learning_rate_init": 0.0003,
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        256,
+        256,
+        256
+      ],
+      "regressor__model__batch_size": 64,
+      "regressor__model__alpha": 0.0001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.003,
+      "regressor__model__hidden_layer_sizes": [
+        64,
+        64,
+        64
+      ],
+      "regressor__model__batch_size": 256,
+      "regressor__model__alpha": 0.01
+    },
+    {
+      "regressor__model__learning_rate_init": 0.0003,
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        256,
+        256,
+        256
+      ],
+      "regressor__model__batch_size": 128,
+      "regressor__model__alpha": 0.01
+    },
+    {
+      "regressor__model__learning_rate_init": 0.001,
+      "regressor__model__hidden_layer_sizes": [
+        128,
+        128,
+        128
+      ],
+      "regressor__model__batch_size": 64,
+      "regressor__model__alpha": 0.001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.0003,
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        256,
+        256,
+        256
+      ],
+      "regressor__model__batch_size": 128,
+      "regressor__model__alpha": 0.0001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.003,
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        256,
+        256,
+        256
+      ],
+      "regressor__model__batch_size": 64,
+      "regressor__model__alpha": 0.01
+    },
+    {
+      "regressor__model__learning_rate_init": 0.003,
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        128,
+        64
+      ],
+      "regressor__model__batch_size": 128,
+      "regressor__model__alpha": 0.001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.003,
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        128,
+        128,
+        64
+      ],
+      "regressor__model__batch_size": 128,
+      "regressor__model__alpha": 0.001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.001,
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        128,
+        64
+      ],
+      "regressor__model__batch_size": 64,
+      "regressor__model__alpha": 0.001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.0003,
+      "regressor__model__hidden_layer_sizes": [
+        64,
+        64,
+        64
+      ],
+      "regressor__model__batch_size": 128,
+      "regressor__model__alpha": 0.01
+    },
+    {
+      "regressor__model__learning_rate_init": 0.0003,
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        128,
+        128,
+        64
+      ],
+      "regressor__model__batch_size": 256,
+      "regressor__model__alpha": 0.01
+    },
+    {
+      "regressor__model__learning_rate_init": 0.0003,
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        128,
+        128,
+        64
+      ],
+      "regressor__model__batch_size": 64,
+      "regressor__model__alpha": 0.001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.003,
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        256,
+        256,
+        256
+      ],
+      "regressor__model__batch_size": 128,
+      "regressor__model__alpha": 0.0001
+    },
+    {
+      "regressor__model__learning_rate_init": 0.001,
+      "regressor__model__hidden_layer_sizes": [
+        64,
+        64,
+        64
+      ],
+      "regressor__model__batch_size": 64,
+      "regressor__model__alpha": 0.01
+    },
+    {
+      "regressor__model__learning_rate_init": 0.001,
+      "regressor__model__hidden_layer_sizes": [
+        256,
+        128,
+        64
+      ],
+      "regressor__model__batch_size": 128,
+      "regressor__model__alpha": 0.001
+    }
+  ],
+  "final_holdout_used": false,
+  "data_sha256": "6274ce357827c010933e13f132aea313bf288e9343411d187c34692556d72075",
+  "fold_sha256": "aa7d5cdf77a267a0be83d40fdfb309c0a612bab1302b19177b33e13d98d170f5",
+  "probe_seconds_two_targets_5fold": 201.14184165999995,
+  "probe_seconds_per_target": {
+    "Q_leak_W": 64.61197301900029,
+    "dp_thermal_Pa": 136.5235620829999
+  },
+  "actual_candidates_per_target": 21,
+  "estimated_50_candidates_seconds": 10057.092082999998,
+  "guarded_estimated_50_candidates_seconds": 12571.365103749997,
+  "budget_reason": "same prefix of preregistered candidates, reduced only by measured runtime"
+}

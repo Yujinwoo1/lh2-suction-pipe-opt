@@ -1,4 +1,4 @@
-"""Predict new in-domain designs using the development-selected models."""
+"""개발 자료로 선정한 모델을 학습 범위 안의 설계에만 적용한다."""
 import argparse
 import json
 from pathlib import Path
@@ -10,6 +10,9 @@ from hydraulics import load_ratio_model, predicted_ratio
 
 
 def validate_inputs(frame):
+    """개발 자료의 외삽 시험에서 오차가 약 4배 늘어 범위 밖 입력을 거부함.
+    이 시험은 고정 설정의 진단이며 독립적인 외삽 성능 검증은 아님.
+    """
     missing = set(BOUNDS)-set(frame)
     if missing:
         raise ValueError(f'Missing inputs: {sorted(missing)}')
@@ -37,7 +40,7 @@ def predict(frame, model_dir, hyd_model=None):
     data['D_o_mm'] = data.D_mm+3+2*data.t_ins_mm
     data['predicted_constraint_satisfied'] = data.dp_design_Pa_pred <= 48300
     data['n_star'] = 1040/(4*data.L_m*data.f_Hz)
-    # Report the exact low-order rule in the source, not a broader validated criterion.
+    # 공진 표시는 원본의 저차 판별식이며 솔버 확인을 대신하지 않는다.
     data['low_order_resonance_flag'] = (data.n_star < 20) & (abs(data.n_star-np.round(data.n_star)) < .1)
     return data
 

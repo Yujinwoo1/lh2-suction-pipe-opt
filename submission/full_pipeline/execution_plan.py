@@ -1,4 +1,4 @@
-"""Cost-only preregistered resource admission and wall-clock arithmetic."""
+"""메모리/CPU 한도를 넘지 않도록 사전에 정한 비용 기준으로 병렬 수를 제한함."""
 import math
 import os
 from pathlib import Path
@@ -10,7 +10,7 @@ from threadpoolctl import threadpool_info
 def resource_snapshot():
     values={line.split(':')[0]:int(line.split()[1]) for line in Path('/proc/meminfo').read_text().splitlines() if ':' in line}
     available=values['MemAvailable']/1024
-    # Respect a container cap when the standard cgroup-v2 interface exists.
+    # 시스템 RAM보다 컨테이너 한도가 작을 수 있어 함께 확인함.
     cap,current=Path('/sys/fs/cgroup/memory.max'),Path('/sys/fs/cgroup/memory.current')
     if cap.exists() and current.exists() and cap.read_text().strip()!='max':
         available=min(available,(int(cap.read_text())-int(current.read_text()))/2**20)
@@ -88,10 +88,8 @@ def walltime_decision(estimates,rule,reduced_estimates=None):
 
 
 def release_workers(jobs):
-    """Release our completed loky pool before a parent refit/benchmark.
-
-    Idle workers can retain allocator memory. Do not overlap that retained RSS
-    with a new parent GPR fit outside the admitted concurrent-fit reservation.
+    """대기 중인 worker도 메모리를 잡고 있어 refit 전에 종료함.
+    남은 worker 메모리와 새 GPR 학습 메모리가 겹치는 것을 막기 위함.
     """
     if jobs>1:
         from joblib.externals.loky import get_reusable_executor
@@ -103,7 +101,7 @@ def release_workers(jobs):
 
 
 def reschedule_estimates(estimates,cfg,snapshot=None):
-    """Reuse solo-fit timings after a row cap changes admitted worker counts."""
+    """부분표본 크기로 병렬 수가 달라지면 기존 실측 시간을 새 실행 순서에 맞춰 계산함."""
     if estimates.empty:return estimates.copy()
     rows=[]
     for row in estimates.to_dict('records'):

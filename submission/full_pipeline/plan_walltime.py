@@ -1,4 +1,4 @@
-"""Cost-only wall-clock projection from saved synthetic timing measurements."""
+"""모델 성능과 구분해, 저장된 합성 응답 측정값으로 실행 비용만 비교함."""
 import argparse
 import json
 import math
@@ -12,10 +12,8 @@ from training_support import settings
 
 
 def proxy_estimates(single,native,others,cfg,gpr_rows,budget,snapshot,mode='parallel_one_thread'):
-    """Build the same staged schedule used by develop, without fitting models.
-
-    2000-row single-thread cost is NOT measured: transfer the measured native
-    2000/3000 ratio to the old single-thread timings. Prediction scales with n.
+    """학습을 다시 하지 않고 develop의 단계별 실행 시간을 추정함.
+    2,000행 단일 스레드 시간은 실측값이 아니라 native 측정 비율로 환산한 값임.
     """
     config={**cfg,'gpr_max_rows':gpr_rows,'budget':budget}
     observed=native.set_index('fit_rows')

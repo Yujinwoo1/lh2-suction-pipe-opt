@@ -1,4 +1,6 @@
-"""Reproducible training caps and settings, shared by CLI and saved models."""
+"""모델 간 비교를 위해 튜닝 후보 수와 학습 부분표본 기준을 맞췄다.
+
+다항 Ridge·RF·MLP는 출력별 50후보로 비교함. GPR은 계산 비용 때문에 6후보를 전수 탐색했다."""
 import json
 from pathlib import Path
 
@@ -68,11 +70,8 @@ def sample_indices(n_rows, max_rows):
 
 
 class SubsampledTargetRegressor(TransformedTargetRegressor):
-    """Cap GPR before any Pipeline preprocessing; validation is never sampled.
-
-    GPR uses a subsample because exact training costs O(n³). Other models
-    continue to use all available training rows. regressor_ remains a Pipeline
-    so existing inference and log-space sigma extraction work unchanged.
+    """GPR은 계산량이 O(n³)으로 늘어 전처리 전에 학습 자료만 부분 추출함.
+    검증 자료는 줄이지 않으며, 다른 모델은 전체 학습 자료를 사용함.
     """
     def __init__(self, regressor=None, *, transformer=None, func=None,
                  inverse_func=None, check_inverse=True, max_rows=3000):
@@ -89,11 +88,8 @@ class SubsampledTargetRegressor(TransformedTargetRegressor):
 
 
 def sampled_parameters(space, budget):
-    """Exact equal budget without silently truncating finite search spaces.
-
-    Preserve pilot finite candidates when sufficient. Larger budgets use
-    continuous alpha/learning-rate or integer tree-count ranges with the same
-    endpoints, fixed before full-data evaluation. Record every actual draw.
+    """모델별 탐색 기회가 달라지지 않도록 요청한 수만큼 서로 다른 후보를 뽑는다.
+    후보가 부족하면 미리 정한 범위 안에서 추출하고 실제 후보 수를 기록함.
     """
     if not space:
         return [{}]
@@ -110,8 +106,7 @@ def sampled_parameters(space, budget):
         else:
             raise ValueError('Requested budget exceeds the available unique candidates.')
     samples = list(ParameterSampler(distribution, n_iter=budget, random_state=SEED))
-    # Integer distributions may repeat; refill deterministically rather than
-    # claiming repeated configurations are unique candidates.
+    # 중복 설정을 별도 후보로 세지 않도록 같은 seed로 보충한다.
     unique = {}
     for item in samples:
         unique.setdefault(repr(sorted(item.items())), item)
@@ -126,7 +121,7 @@ def sampled_parameters(space, budget):
 
 
 def budget_decision(estimates, rule):
-    """Apply preregistered thresholds to the reference-budget total estimate."""
+    """실행 시간에 따라 임의로 예산을 바꾸지 않도록 사전에 정한 기준을 사용함."""
     if rule.get('mode')=='wall_clock':
         from execution_plan import walltime_decision
         return walltime_decision(estimates,rule)
@@ -134,7 +129,7 @@ def budget_decision(estimates, rule):
     total=0.0
     for row in estimates.to_dict('records'):
         count=row['candidates']
-        # Fixed models have one evaluated candidate, not a tunable budget.
+        # 고정 모델의 평가 시간은 튜닝 예산에 비례해 늘리지 않음.
         tunable=row.get('tunable',row['model'] not in ['linear','physics_baseline','ann_ref'])
         search=row['estimated_search_seconds']*(reference/count if tunable else 1)
         total += row['estimated_develop_seconds']-row['estimated_search_seconds']+search

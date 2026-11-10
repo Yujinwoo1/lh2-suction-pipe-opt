@@ -1,4 +1,4 @@
-"""Atomic workflow state and immutable-output receipts."""
+"""중단 후에도 완료 여부를 확인할 수 있도록 실행 상태와 산출물 해시를 기록하였음."""
 import hashlib
 import json
 import os

@@ -1,0 +1,15 @@
+{
+  "executed_code_cells": 16,
+  "added_cells": 2,
+  "existing_sources_and_outputs_preserved": true,
+  "new_comparison_matches_csv": true,
+  "existing_numeric_max_errors": {
+    "final_test_metrics": 2.4346161353605567e-07,
+    "hydraulic_metrics": 4.223061900177072e-10,
+    "reverification_Q_leak_W": 4.24509993129929e-12,
+    "reverification_dp_thermal_Pa": 3.2910318914503023e-10,
+    "reverification_dp_design_Pa": 1.2566703233574117e-09,
+    "hv_ratio": 3.931739378515431e-10
+  },
+  "finalize_executed": false
+}

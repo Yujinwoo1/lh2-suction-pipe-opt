@@ -1,4 +1,4 @@
-"""Build the readable entry-point notebook using only the standard library."""
+"""별도 패키지 없이 설명·실행용 노트북을 만들기 위한 보조 코드."""
 import json
 from pathlib import Path
 
