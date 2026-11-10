@@ -80,9 +80,10 @@ class ReverificationTests(unittest.TestCase):
         for cell in code:
             self.assertTrue(cell['outputs'])
             self.assertFalse(any(o['output_type'] == 'error' for o in cell['outputs']))
-        self.assertIn('T4_reverification.csv', ''.join(code[-1]['source']))
-        self.assertIn('Image(', ''.join(code[-1]['source']))
-        self.assertTrue(any('image/png' in o.get('data', {}) for o in code[-1]['outputs']))
+        recheck = next(c for c in code if 't4 = pd.read_csv' in ''.join(c['source']))
+        self.assertIn('T4_reverification.csv', ''.join(recheck['source']))
+        self.assertIn('Image(', ''.join(recheck['source']))
+        self.assertTrue(any('image/png' in o.get('data', {}) for o in recheck['outputs']))
 
 
 if __name__ == '__main__':
