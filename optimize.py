@@ -196,11 +196,14 @@ def compare(points_path, solver_path, output):
         raise ValueError('point_id must be unique.')
     if set(points.point_id) != set(solver.point_id):
         raise ValueError('Solver point_id set must match verification points exactly.')
-    actual = solver[['point_id', 'Q_leak_W', 'dp_design_Pa']]
+    targets = [('Q_leak_W', 'Q_leak_pred_W'), ('dp_design_Pa', 'dp_design_pred_Pa')]
+    if 'dp_thermal_Pa' in solver.columns:
+        targets.append(('dp_thermal_Pa', 'dp_thermal_pred_Pa'))
+    actual = solver[['point_id'] + [target for target, _ in targets]]
     if not np.isfinite(actual.iloc[:, 1:].to_numpy(dtype=float)).all() or (actual.iloc[:, 1:] <= 0).any().any():
         raise ValueError('Solver outputs must be finite and positive.')
     table = points.merge(actual, on='point_id', validate='one_to_one')
-    for target, prediction in [('Q_leak_W', 'Q_leak_pred_W'), ('dp_design_Pa', 'dp_design_pred_Pa')]:
+    for target, prediction in targets:
         table[target+'_error_pct'] = 100*(table[prediction]/table[target]-1)
         table[target+'_abs_error_pct'] = abs(table[target+'_error_pct'])
     table['predicted_constraint_satisfied'] = table.dp_design_pred_Pa <= 48300

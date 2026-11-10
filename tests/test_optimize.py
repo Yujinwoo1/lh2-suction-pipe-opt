@@ -116,6 +116,28 @@ class OptimizationTests(unittest.TestCase):
                 optimize.compare(points, solver, self.directory/'T4.csv')
             self.assertFalse((self.directory/'T4.csv').exists())
 
+    def test_compare_thermal_error_and_invalid_thermal_solver_output(self):
+        points = self.directory/'points.csv'
+        solver = self.directory/'solver.csv'
+        pd.DataFrame({'point_id': ['V001', 'V002'], 'Q_leak_pred_W': [10, 10],
+                      'dp_thermal_pred_Pa': [110, 90],
+                      'dp_design_pred_Pa': [48300, 48300]}).to_csv(points, index=False)
+        actual = pd.DataFrame({'point_id': ['V002', 'V001'], 'Q_leak_W': [10, 10],
+                               'dp_thermal_Pa': [100, 100],
+                               'dp_design_Pa': [48300.1, 48300]})
+        actual.to_csv(solver, index=False)
+        table = optimize.compare(points, solver, self.directory/'thermal.csv')
+        np.testing.assert_allclose(table.dp_thermal_Pa_error_pct, [10, -10])
+        np.testing.assert_allclose(table.dp_thermal_Pa_abs_error_pct, [10, 10])
+        self.assertEqual(table.constraint_agreement.tolist(), [True, False])
+        for value in [0, -1, np.nan, np.inf]:
+            with self.subTest(thermal=value):
+                actual.loc[0, 'dp_thermal_Pa'] = value
+                actual.to_csv(solver, index=False)
+                with self.assertRaisesRegex(ValueError, 'finite and positive'):
+                    optimize.compare(points, solver, self.directory/'invalid.csv')
+                self.assertFalse((self.directory/'invalid.csv').exists())
+
 
 if __name__ == '__main__':
     unittest.main()
