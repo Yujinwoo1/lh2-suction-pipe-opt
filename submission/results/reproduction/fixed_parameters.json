@@ -1,0 +1,230 @@
+{
+  "Q_leak_W__gpr": {
+    "alpha": 1e-10,
+    "copy_X_train": true,
+    "kernel": {
+      "class": "Sum",
+      "params": {
+        "k1": {
+          "class": "Product",
+          "params": {
+            "k1": {
+              "class": "ConstantKernel",
+              "params": {
+                "constant_value": 13.799927593900694,
+                "constant_value_bounds": [
+                  0.001,
+                  1000.0
+                ]
+              }
+            },
+            "k2": {
+              "class": "RBF",
+              "params": {
+                "length_scale": [
+                  258.4037129271939,
+                  100000.00000000001,
+                  100000.00000000001,
+                  11.884818757210178,
+                  7.682793394246902,
+                  100000.00000000001,
+                  6.85804071302968
+                ],
+                "length_scale_bounds": [
+                  1e-05,
+                  100000.0
+                ]
+              }
+            }
+          }
+        },
+        "k2": {
+          "class": "WhiteKernel",
+          "params": {
+            "noise_level": 1.0000000000000007e-09,
+            "noise_level_bounds": [
+              1e-09,
+              0.1
+            ]
+          }
+        }
+      }
+    },
+    "n_restarts_optimizer": 0,
+    "n_targets": null,
+    "normalize_y": true,
+    "optimizer": null,
+    "random_state": 2026
+  },
+  "Q_leak_W__mlp": {
+    "activation": "tanh",
+    "alpha": 0.007826766685571005,
+    "batch_size": "auto",
+    "beta_1": 0.9,
+    "beta_2": 0.999,
+    "early_stopping": true,
+    "epsilon": 1e-08,
+    "hidden_layer_sizes": [
+      64
+    ],
+    "learning_rate": "constant",
+    "learning_rate_init": 0.003,
+    "loss": "squared_error",
+    "max_fun": 15000,
+    "max_iter": 3000,
+    "momentum": 0.9,
+    "n_iter_no_change": 40,
+    "nesterovs_momentum": true,
+    "power_t": 0.5,
+    "random_state": 2026,
+    "shuffle": true,
+    "solver": "adam",
+    "tol": 0.0001,
+    "validation_fraction": 0.2,
+    "verbose": false,
+    "warm_start": false
+  },
+  "dp_thermal_Pa__gpr": {
+    "alpha": 1e-07,
+    "copy_X_train": true,
+    "kernel": {
+      "class": "Sum",
+      "params": {
+        "k1": {
+          "class": "Product",
+          "params": {
+            "k1": {
+              "class": "ConstantKernel",
+              "params": {
+                "constant_value": 61.40785796002201,
+                "constant_value_bounds": [
+                  0.001,
+                  1000.0
+                ]
+              }
+            },
+            "k2": {
+              "class": "Matern",
+              "params": {
+                "length_scale": [
+                  7.634076652067111,
+                  100000.00000000001,
+                  17.56020854015141,
+                  12.211760365528123,
+                  44.371518623995755,
+                  4687.1733468254315,
+                  13.342626256038216
+                ],
+                "length_scale_bounds": [
+                  1e-05,
+                  100000.0
+                ],
+                "nu": 2.5
+              }
+            }
+          }
+        },
+        "k2": {
+          "class": "WhiteKernel",
+          "params": {
+            "noise_level": 6.461846325739401e-07,
+            "noise_level_bounds": [
+              1e-09,
+              0.1
+            ]
+          }
+        }
+      }
+    },
+    "n_restarts_optimizer": 0,
+    "n_targets": null,
+    "normalize_y": true,
+    "optimizer": null,
+    "random_state": 2026
+  },
+  "dp_thermal_Pa__mlp": {
+    "activation": "tanh",
+    "alpha": 0.00039336173226213586,
+    "batch_size": "auto",
+    "beta_1": 0.9,
+    "beta_2": 0.999,
+    "early_stopping": true,
+    "epsilon": 1e-08,
+    "hidden_layer_sizes": [
+      32,
+      32
+    ],
+    "learning_rate": "constant",
+    "learning_rate_init": 0.003,
+    "loss": "squared_error",
+    "max_fun": 15000,
+    "max_iter": 3000,
+    "momentum": 0.9,
+    "n_iter_no_change": 40,
+    "nesterovs_momentum": true,
+    "power_t": 0.5,
+    "random_state": 2026,
+    "shuffle": true,
+    "solver": "adam",
+    "tol": 0.0001,
+    "validation_fraction": 0.2,
+    "verbose": false,
+    "warm_start": false
+  },
+  "hyd_ratio__gpr": {
+    "alpha": 1e-07,
+    "copy_X_train": true,
+    "kernel": {
+      "class": "Sum",
+      "params": {
+        "k1": {
+          "class": "Product",
+          "params": {
+            "k1": {
+              "class": "ConstantKernel",
+              "params": {
+                "constant_value": 0.9934528110874072,
+                "constant_value_bounds": [
+                  0.001,
+                  1000.0
+                ]
+              }
+            },
+            "k2": {
+              "class": "RBF",
+              "params": {
+                "length_scale": [
+                  5.603799123913014,
+                  1.8100814252264252,
+                  0.6711374208489062,
+                  0.7600962356773306,
+                  8.680067878132279,
+                  0.9700424569709776
+                ],
+                "length_scale_bounds": [
+                  1e-05,
+                  100000.0
+                ]
+              }
+            }
+          }
+        },
+        "k2": {
+          "class": "WhiteKernel",
+          "params": {
+            "noise_level": 0.008118404582913172,
+            "noise_level_bounds": [
+              1e-09,
+              0.1
+            ]
+          }
+        }
+      }
+    },
+    "n_restarts_optimizer": 0,
+    "n_targets": null,
+    "normalize_y": true,
+    "optimizer": null,
+    "random_state": 2026
+  }
+}

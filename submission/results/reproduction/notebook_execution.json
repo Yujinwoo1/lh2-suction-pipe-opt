@@ -1,0 +1,15 @@
+{
+  "elapsed_seconds": 24.255438813999945,
+  "max_abs_metric_difference": {
+    "r2": 1.9173551635276453e-13,
+    "rmse": 1.1853832404540299e-07,
+    "mape_pct": 1.4167539324864975e-09
+  },
+  "max_abs_prediction_difference": 6.082761683501303e-05,
+  "test_rows": 2000,
+  "development_rows": 8000,
+  "gpr_rows": 3000,
+  "seed": 2026,
+  "finalize_rerun": false,
+  "explanation": "학습된 커널의 전체 정밀도·부분표본·선정 설정을 고정. 남는 작은 차이는 커널 복원과 부동소수점 연산 경로 차이로 추정하며 재튜닝하지 않음."
+}

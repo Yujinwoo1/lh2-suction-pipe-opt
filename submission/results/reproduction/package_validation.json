@@ -1,0 +1,25 @@
+{
+  "original_unittest": {
+    "tests": 43,
+    "result": "OK"
+  },
+  "isolated_submission_unittest": {
+    "tests": 49,
+    "result": "OK",
+    "command": "python -m unittest discover -s tests -v",
+    "cwd": "full_pipeline"
+  },
+  "notebook_code_cells": 11,
+  "all_cells_executed": true,
+  "notebook_elapsed_seconds": 24.255438813999945,
+  "notebook_with_kernel_start_seconds": 25.3,
+  "notebook_full_execution_count": 3,
+  "execution_note": "고정 모델 설정으로 전체 실행. 후보 합산 절차와 표 배치 검토 후 마지막 실행 출력을 보존. 튜닝과 원본 finalize 재실행 없음.",
+  "byte_identical_original_source_and_data_files": 40,
+  "original_report_tables_and_figures_unchanged": true,
+  "original_code_modified": false,
+  "commit_created": false,
+  "personal_home_paths_in_bundle": false,
+  "bundle_file_bytes": 23400325,
+  "bundle_mib": 22.316
+}

@@ -1,0 +1,9 @@
+{
+  "hidden_layer_sizes": null,
+  "activation": null,
+  "solver": null,
+  "learning_rate": null,
+  "max_iter": null,
+  "n_train": null,
+  "source": null
+}
