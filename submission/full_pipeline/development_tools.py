@@ -1,4 +1,9 @@
-"""테스트셋을 남겨 두고 개발 자료로 학습 곡선과 예상 실행 시간을 확인함."""
+"""테스트셋을 남겨 두고 개발 자료로 학습 곡선과 예상 실행 시간을 확인한다.
+
+파이프라인 단계: 보조 도구
+입력: 개발 입력과 정답, 모델 후보, CV 분할과 실행 설정을 받는다.
+출력: 학습 곡선의 검증 지표와 단계별 예상 실행 시간을 반환한다.
+최종 결과에는 쓰이지 않는 보조 도구이다."""
 import time
 import warnings
 
@@ -65,8 +70,8 @@ def fit_validation(estimator,X,y,a,b):
 
 
 def estimate_runtime(models_by_target, X, targets, folds, cfg, learning=False, labels=None):
-    """후보 하나와 fold 하나의 실측 시간으로 전체 실행 시간을 추정함.
-    단독 학습 기준이라 동시 실행 시 CPU·메모리 경합은 반영하지 못함.
+    """후보 하나와 fold 하나의 실측 시간으로 전체 실행 시간을 추정한다.
+    단독 학습 기준이라 동시 실행 시 CPU와 메모리 경합은 반영하지 못한다.
     """
     import math
     from execution_plan import resource_plan,candidate_parameters,search_wall_seconds

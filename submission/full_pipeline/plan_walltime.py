@@ -1,4 +1,9 @@
-"""모델 성능과 구분해, 저장된 합성 응답 측정값으로 실행 비용만 비교함."""
+"""저장된 합성 응답 측정값으로 모델 성능과 별개인 실행 비용을 비교한다.
+
+파이프라인 단계: 실행 관리
+입력: 두 벤치마크의 시간 측정 CSV와 configs/full10k.json을 읽는다.
+출력: 예상 시간표와 자원 계획, 비용 기준의 예산 판단을 저장한다.
+최종 결과에는 쓰이지 않는 보조 도구이며, execution_plan.py를 호출해 자원과 시간 계획을 계산한다."""
 import argparse
 import json
 import math
@@ -12,8 +17,8 @@ from training_support import settings
 
 
 def proxy_estimates(single,native,others,cfg,gpr_rows,budget,snapshot,mode='parallel_one_thread'):
-    """학습을 다시 하지 않고 develop의 단계별 실행 시간을 추정함.
-    2,000행 단일 스레드 시간은 실측값이 아니라 native 측정 비율로 환산한 값임.
+    """학습을 다시 하지 않고 develop의 단계별 실행 시간을 추정한다.
+    2,000행 단일 스레드 시간은 실측값이 아니라 native 측정 비율로 환산한 값이다.
     """
     config={**cfg,'gpr_max_rows':gpr_rows,'budget':budget}
     observed=native.set_index('fit_rows')

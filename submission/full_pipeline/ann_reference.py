@@ -1,4 +1,9 @@
-"""깊은 MLP를 개발 CV 비교군에 추가한다. [8,9]의 논문 구조를 그대로 재현한 것은 아니다."""
+"""깊은 MLP를 개발 CV 비교군에 추가한다. [8,9]의 논문 구조를 그대로 재현한 것은 아니다.
+
+파이프라인 단계: 모델 학습과 비교
+입력: ANN 설정, 솔버 데이터, 저장된 개발 분할과 CV 인덱스를 읽는다.
+출력: 참고 ANN 모델과 DNN 비교표, 후보 설정 및 실행 기록을 만든다.
+"""
 import json
 from pathlib import Path
 import numpy as np
@@ -26,8 +31,8 @@ def load_ann_reference(path):
     n=spec['n_train']
     if n!=UNREPORTED and (isinstance(n,bool) or not isinstance(n,int) or n<2):
         raise ValueError('ann_ref n_train must be integer >=2 or the explicit unreported marker.')
-    # Exactly the paper-provided settings; no guessed early stopping or target
-    # labels as inputs. Six original features, no optional physics feature.
+    # 논문에 없는 조기 종료 설정을 임의로 추가하지 않음
+    # 정답과 물리 특성을 제외하고 원본 입력 6개만 사용
     model=SubsampledTargetRegressor(regressor=Pipeline([
         ('scale',StandardScaler()),('model',MLPRegressor(random_state=2026,**kwargs))]),
         func=np.log10,inverse_func=exp10,max_rows=n if n!=UNREPORTED else 2**31-1)
@@ -90,7 +95,7 @@ def development_only_data(data_path, reference, fold_path):
             or set(metadata.iloc[test].case_id) != test_ids
             or set(development_ids) & test_ids):
         raise ValueError('Saved development and test IDs do not match.')
-    # skiprows로 테스트 행을 파싱 전에 제외한다. 타깃 배열에는 개발 정답만 들어간다.
+    # 테스트 정답을 읽지 않도록 파싱 전에 테스트 행을 제외
     positions = set(train.tolist())
     columns = ['case_id', *[name for name in FEATURES if name != 'log10_k_MLI'],
                'k_MLI_W_mK', *TARGETS]
@@ -104,7 +109,7 @@ def development_only_data(data_path, reference, fold_path):
         raise ValueError('Development data must be finite.')
     if (development[TARGETS] <= 0).any().any():
         raise ValueError('Targets must be positive for log10 training.')
-    # 부분표본 ID도 대조해 원래 개발 행 순서까지 복원했는지 확인한다.
+    # 부분표본 ID로 개발 행 순서까지 복원됐는지 확인
     samples = pd.read_csv(reference/'gpr_subsamples.csv')
     expected_sample = development_ids[sample_indices(len(train), cfg['gpr_max_rows'])]
     for target in TARGETS:
@@ -149,7 +154,7 @@ def evaluate_dnn_candidate(X, y, folds, parameters, target, candidate):
             warnings.simplefilter('always')
             fitted.fit(X.iloc[a], y[a])
         fit_seconds = time.perf_counter()-started
-        # 경고를 파일과 터미널에 함께 남겨 미수렴을 결과에서 숨기지 않는다.
+        # 미수렴도 확인할 수 있도록 경고를 파일과 터미널에 함께 기록
         for warning in captured:
             warnings.warn_explicit(str(warning.message), warning.category,
                 filename=Path(warning.filename).name, lineno=warning.lineno)
@@ -173,7 +178,7 @@ def evaluate_dnn_candidate(X, y, folds, parameters, target, candidate):
 
 
 def dnn_summary(rows, parameters, target, candidate_count, elapsed_seconds):
-    """CV로 고른 설정의 fold 평균·표준편차를 기존 T1 형식에 맞춘다.
+    """CV로 고른 설정의 fold 평균과 표준편차를 기존 T1 형식에 맞춘다.
     같은 CV로 튜닝과 비교를 하므로 독립적인 일반화 성능 추정은 아니다.
     """
     import pandas as pd

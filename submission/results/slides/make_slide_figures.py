@@ -2,8 +2,8 @@ import sys, numpy as np, pandas as pd, matplotlib
 matplotlib.use('Agg'); import matplotlib.pyplot as plt
 R=sys.argv[1]; O=sys.argv[2]
 plt.rcParams.update({'font.size':11,'savefig.dpi':300,'savefig.facecolor':'white'})
-COL={'gpr':'C0','mlp':'C1','random_forest':'C2','polynomial_ridge':'C3','linear':'C4','physics_baseline':'C7'}
-NAME={'gpr':'GPR','mlp':'MLP','random_forest':'RF','polynomial_ridge':'Polynomial','linear':'Linear','physics_baseline':'Physics eq.'}
+COL={'gpr':'C0','mlp':'C1','random_forest':'C2','polynomial_ridge':'C3','linear':'C4','physics_baseline':'C7','dnn':'C5'}
+NAME={'gpr':'GPR','mlp':'MLP','random_forest':'RF','polynomial_ridge':'Polynomial','linear':'Linear','physics_baseline':'Physics eq.','dnn':'DNN*'}
 
 # F1: test error distribution
 p=pd.read_csv(f'{R}/reproduction/final_test_predictions.csv')
@@ -45,14 +45,16 @@ for a,(t,u) in zip(ax,[('Q_leak_W','Q_leak'),('dp_thermal_Pa','dp_thermal')]):
 fig.tight_layout(); fig.savefig(f'{O}/F3_mlp_training.png'); plt.close(fig)
 
 # F5: model comparison (dev CV MAPE)
-t=pd.read_csv(f'{R}/T1_model_comparison.csv')
+import os
+t=pd.read_csv(f'{R}/T1_with_dnn.csv' if os.path.exists(f'{R}/T1_with_dnn.csv') else f'{R}/T1_model_comparison.csv')
 fig,ax=plt.subplots(1,2,figsize=(10,3.8))
 for a,(tg,u) in zip(ax,[('Q_leak_W','Q_leak'),('dp_thermal_Pa','dp_thermal')]):
     g=t[t.target==tg].sort_values('mape_pct_mean')
     a.bar([NAME[m] for m in g.model],g.mape_pct_mean,color=[COL[m] for m in g.model])
     for i,v in enumerate(g.mape_pct_mean): a.text(i,v,f'{v:.2f}' if v>=0.01 else f'{v:.3f}',ha='center',va='bottom',fontsize=8)
     a.set_yscale('log'); a.set_ylabel('CV mean error (MAPE) [%]'); a.set_title(f'{u} (5-fold CV, n=8,000)'); a.tick_params(axis='x',rotation=20)
-fig.tight_layout(); fig.savefig(f'{O}/F5_model_comparison.png'); plt.close(fig)
+if 'dnn' in set(t.model): fig.text(0.5,0.005,'*DNN: added after model selection, 21 tuning candidates (others 50 or full kernel search).',ha='center',fontsize=8,color='gray')
+fig.tight_layout(rect=(0,0.03,1,1)); fig.savefig(f'{O}/F5_model_comparison.png'); plt.close(fig)
 
 # F6: hydraulic correction effect (final test)
 e=pd.read_csv(f'{R}/T_hydraulic_effect.csv'); e=e[e.evaluation_scope=='single final holdout'].set_index('method')

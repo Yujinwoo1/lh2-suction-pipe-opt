@@ -1,4 +1,9 @@
-"""중단된 단계부터 이어 실행하되 finalize는 시작 기록이 있으면 재시도하지 않음"""
+"""중단된 단계부터 이어 실행하되 finalize는 시작 기록이 있으면 재시도하지 않는다.
+
+파이프라인 단계: 실행 관리
+입력: 솔버 CSV와 고정 설정, 기존 run_state.json 및 완료 기록을 읽는다.
+출력: 단계별 결과와 로그, run_state.json, 요약 보고서를 저장한다.
+run_full10k.sh가 이 파일을 실행하며, 이 파일은 lh2_pipeline.py, optimize.py, summarize_results.py를 호출한다."""
 import argparse
 from datetime import datetime
 import fcntl
@@ -118,7 +123,7 @@ def run(data,root,quick=False):
                 work=root/'work'/f'{stage}_{attempt:03d}'
                 work.parent.mkdir(exist_ok=True)
                 state['stages'][stage]=dict(status='running',attempts=attempt,started_at=timestamp(),work_dir=str(work))
-                state['status']='running';save_state(root,state)  # durable before finalize child can open holdout
+                state['status']='running';save_state(root,state)  # finalize가 테스트셋을 열기 전에 시작 기록을 디스크에 저장
                 started=time.monotonic();log(root,f'STAGE_START {stage} attempt={attempt}')
                 execute_stage(root,stage,work)
                 if stage!='finalize':

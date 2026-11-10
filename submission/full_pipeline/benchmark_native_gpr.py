@@ -1,4 +1,9 @@
-"""BLAS 기본 스레드 수에서 GPR 비용만 측정함. 합성 응답과 학습 모델은 저장하지 않음."""
+"""BLAS 기본 스레드 수에서 GPR 비용만 측정한다.
+
+파이프라인 단계: 보조 도구
+입력: 입력 CSV에서 원본 입력 열만 읽는다.
+출력: 학습 시간과 메모리 측정값을 저장한다. 합성 응답과 학습 모델은 저장하지 않는다.
+최종 결과에는 쓰이지 않는 보조 도구이다."""
 import argparse
 import hashlib
 import json
@@ -39,7 +44,7 @@ def measure(path,n_rows):
 
 
 def run(path,out):
-    benchmark_inputs(path)  # validate before making output directory
+    benchmark_inputs(path)  # 잘못된 입력으로 결과 폴더가 남지 않도록 먼저 검사
     out.mkdir(parents=True,exist_ok=False)
     results=[]
     for rows in [3000,2000]:

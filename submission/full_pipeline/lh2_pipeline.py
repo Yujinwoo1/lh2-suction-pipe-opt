@@ -1,10 +1,8 @@
-"""LH2 흡입배관의 대리모델 비교/선정과 최종 평가를 담당하는 실행 코드.
+"""LH2 흡입배관의 대리모델을 비교하고 선정한 뒤 최종 평가를 수행한다.
 
-develop에서는 개발 자료로 후보 비교, 학습 곡선, 수력 보정을 준비함.
-finalize에서는 이미 선정한 모델을 불러 고정 테스트셋을 한 번만 평가함.
-1만 개 자료의 기본 분할은 개발 8,000개 / 테스트 2,000개이며,
-기화 라벨 비율을 유지하도록 층화하고 무작위 seed는 2026으로 고정함.
-테스트 결과를 보고 모델이나 설정을 바꾸지 않도록 두 단계를 분리했음.
+파이프라인 단계: 모델 학습과 비교
+입력: 정답이 있는 솔버 CSV와 실행 설정을 읽는다. finalize는 저장된 모델과 분할도 읽는다.
+출력: develop은 모델과 개발 비교표를, finalize는 고정 테스트셋의 1회 평가 결과를 저장한다.
 """
 from __future__ import annotations
 
@@ -52,8 +50,8 @@ from ann_reference import load_ann_reference
 from hydraulics import hydraulic_cv, ratio_estimator, load_ratio_model, predicted_ratio, pressure_metrics
 
 # 1. 공통 입력과 물리식
-# case_id·정답·기화 라벨은 FEATURES에 넣지 않음. 기화 라벨은 층화 분할에만 사용함.
-# 열전도도는 값의 범위가 넓어 log10 값으로 입력하며, BOUNDS는 예측 허용 범위임.
+# case_id와 정답은 입력에서 제외하고, 기화 라벨은 층화 분할에만 사용
+# 열전도도는 값의 범위가 넓어 log10 값으로 입력
 SEED = 2026
 FEATURES = ['D_mm', 't_ins_mm', 'f_Hz', 'L_m', 'mdot_kg_h', 'log10_k_MLI']
 TARGETS = ['Q_leak_W', 'dp_thermal_Pa']
@@ -62,22 +60,22 @@ BOUNDS = {'D_mm': (12, 50), 't_ins_mm': (2, 25), 'f_Hz': (2, 10),
 
 
 def save_json(path, value):
-    """실행 설정과 감사 기록을 사람이 읽을 수 있는 JSON으로 남김.
+    """실행 설정과 감사 기록을 사람이 읽을 수 있는 JSON으로 남긴다.
     """
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2, default=str), encoding='utf-8')
 
 
 def rigid_pressure(df):
-    """AI 오차와 수력 근사 오차를 구분하려고 강체 압력은 식으로 계산함.
-    최적화와 새 입력 예측에서도 같은 식을 재사용함.
+    """AI 오차와 수력 근사 오차를 구분하려고 강체 압력은 식으로 계산한다.
+    최적화와 새 입력 예측에서도 같은 식을 재사용한다.
     """
-    # 내경은 mm→m, 유량은 kg/h→kg/s로 환산. 식을 정리하면 밀도 항은 소거됨.
+    # 식의 단위를 맞추려고 내경은 mm에서 m로, 유량은 kg/h에서 kg/s로 환산
     area = np.pi * (df.D_mm.to_numpy() / 1000)**2 / 4
     return df.L_m.to_numpy() * (np.pi * df.mdot_kg_h.to_numpy() / 3600) * (2*np.pi*df.f_Hz.to_numpy()) / area
 
 def load_data(path):
-    """단위·중복·물리 관계를 먼저 검사해 잘못된 자료가 학습에 들어가는 것을 막음.
-    정답 없는 입력 목록은 거부하고, status가 있으면 수렴한 행만 사용함.
+    """단위와 중복, 물리 관계를 먼저 검사해 잘못된 자료가 학습에 들어가는 것을 막는다.
+    정답 없는 입력 목록은 거부하고, status가 있으면 수렴한 행만 사용한다.
     """
     df = pd.read_csv(path)
     required = ['case_id', *BOUNDS, *TARGETS, 'dp_hyd_Pa', 'dp_design_Pa', 'dp_rigid_Pa', 'D_o_mm', 'vaporized']
@@ -97,7 +95,7 @@ def load_data(path):
         warnings.warn(f'Large dataset vaporized rate {df.vaporized.mean():.2%} differs from pilot 6% by more than 3 percentage points.')
     if df[required].isna().any().any() or not np.isfinite(df[required].to_numpy(dtype=float)).all():
         raise ValueError('Missing or nonfinite values found.')
-    # 같은 설계가 학습/검증 양쪽에 들어가 정확도가 부풀려지는 것을 막음.
+    # 같은 설계가 학습과 검증 양쪽에 들어가 정확도가 부풀려지는 것을 막음
     if df.case_id.duplicated().any() or df.duplicated(list(BOUNDS)).any():
         raise ValueError('Duplicate IDs or input conditions: resolve before splitting.')
     if len(df) < 50 or (df[TARGETS] <= 0).any().any():
@@ -105,13 +103,13 @@ def load_data(path):
     for col, (lo, hi) in BOUNDS.items():
         if not df[col].between(lo, hi).all():
             raise ValueError(f'{col} is outside the declared domain.')
-    # CSV에 저장된 로그값도 원값과 대조해 열 이름·변환 방식의 혼동을 확인함.
+    # 로그값을 원값과 대조해 열 이름과 변환 방식이 맞는지 확인
     for col, raw in [('log10_k_MLI', 'k_MLI_W_mK'), ('log10_Q_leak', 'Q_leak_W')]:
         computed = np.log10(df[raw])
         if col in df and not np.allclose(df[col], computed, atol=1e-6, rtol=0):
             raise ValueError(f'{col} is inconsistent with {raw}.')
         df[col] = computed
-    # 외경, 압력 합, 임계값 라벨, 강체식을 함께 대조해 단위/열 대응 오류를 찾음.
+    # 물리 관계와 라벨을 대조해 단위나 열 대응 오류를 확인
     if not np.allclose(df.D_o_mm, df.D_mm+3+2*df.t_ins_mm, atol=1e-4):
         raise ValueError('Outer diameter identity failed.')
     if not np.allclose(df.dp_design_Pa, df.dp_hyd_Pa+df.dp_thermal_Pa, atol=1, rtol=1e-5):
@@ -124,8 +122,8 @@ def load_data(path):
 
 
 def audit(df, out):
-    """실제 열적 압력을 넣어 수력 계수 1.8 자체에서 생기는 오차를 따로 확인
-    전체 자료의 일관성 감사이며, 이 수치로 모델을 선정하지 않음.
+    """실제 열적 압력을 넣어 수력 계수 1.8 자체에서 생기는 오차를 따로 확인한다.
+    전체 자료의 물리 관계를 확인하는 검사이며, 이 수치로 모델을 선정하지 않는다.
     """
     p = df.dp_thermal_Pa.to_numpy() + 1.8*rigid_pressure(df)
     rows = pd.DataFrame({'case_id': df.case_id, 'solver_pressure_Pa': df.dp_design_Pa,
@@ -148,11 +146,11 @@ def audit(df, out):
 
 # 2. 비교 모델과 평가 기준
 def candidates(quick=False, target=None, physics_feature=False):
-    """모든 모델이 같은 입력과 출력 변환으로 비교되도록 Pipeline으로 묶음.
-    스케일러·다항 변환은 CV의 학습 fold에서만 fit해 정보 누출을 막음.
+    """모든 모델이 같은 입력과 출력 변환으로 비교되도록 Pipeline으로 묶는다.
+    스케일러와 다항 변환은 CV의 학습 fold에서만 fit해 정보 누출을 막는다.
     """
     # 물리 특성도 Pipeline 안에서 원본 입력으로 계산함. 정답을 파생 입력으로 쓰지 않음.
-    # 출력은 log10으로 학습하고 predict에서는 원단위로 복원해 같은 지표로 비교하였음
+    # 같은 지표로 비교하려고 log10으로 학습한 출력을 예측할 때 원단위로 복원
     def wrapped(steps):
         if physics_feature:
             steps = [('physics_feature', PhysicsFeatureTransformer(tuple(FEATURES))), *steps]
@@ -180,21 +178,21 @@ def candidates(quick=False, target=None, physics_feature=False):
     gpr = models['gpr'][0]
     models['gpr'] = (SubsampledTargetRegressor(regressor=gpr.regressor,
                      func=np.log10, inverse_func=exp10), models['gpr'][1])
-    # 열침입은 AI가 필요한지 판단할 수 있도록 튜닝 없는 물리식도 비교 대상에 포함하였음
+    # 열침입에 AI가 필요한지 판단하려고 튜닝 없는 물리식도 비교
     if target == 'Q_leak_W':
         models['physics_baseline'] = (PhysicsBaseline(), {})
     return models
 
 
 def lambda_power10(y):
-    """log10 공간의 값을 원단위로 되돌리는 보조 함수
+    """log10 공간의 값을 원단위로 되돌린다.
     """
     return np.power(10., y)
 
 
 def log_rmse_score(estimator, X, y):
-    """출력 크기에 따른 상대적인 예측 차이를 비교하려고 log10 RMSE를 사용함
-    GridSearchCV는 큰 점수를 고르므로 음수로 반환하고, 유효하지 않은 예측은 탈락시킴.
+    """출력 크기에 따른 상대적인 예측 차이를 비교하려고 log10 RMSE를 사용한다.
+    GridSearchCV는 큰 점수를 고르므로 음수로 반환하고, 유효하지 않은 예측은 탈락시킨다.
     """
     prediction = estimator.predict(X)
     if not np.isfinite(prediction).all() or (prediction <= 0).any():
@@ -203,8 +201,8 @@ def log_rmse_score(estimator, X, y):
 
 
 def metrics(y, pred):
-    """원단위 오차와 log10 공간 오차를 함께 남겨 한 지표만으로 해석하지 않도록 함
-    MAPE는 백분율이며 RMSE의 단위는 각 출력의 원단위와 같음.
+    """원단위 오차와 log10 공간 오차를 함께 남겨 한 지표만으로 해석하지 않도록 한다.
+    MAPE는 백분율이며 RMSE의 단위는 각 출력의 원단위와 같다.
     """
     return {'r2': r2_score(y, pred), 'rmse': np.sqrt(mean_squared_error(y, pred)),
             'mape_pct': 100*mean_absolute_percentage_error(y, pred),
@@ -216,14 +214,14 @@ def metrics(y, pred):
 def _development_impl(data, out, quick=False, learning=False, physics_feature=None, *,
                 config=None, budget=None, cv_repeats=None, n_jobs=None,
                 gpr_max_rows=None, estimate_time=False, hyd_model=None, ann_ref_config=None,blas_threads=None,execution_plan=None):
-    """고정 개발 분할에서 튜닝·최종 개발 학습·보고 CV를 순서대로 수행함.
-    실행 비용으로 예산을 조정할 수 있으나 테스트 성능은 판단에 사용하지 않음.
+    """고정 개발 분할에서 튜닝, 최종 개발 학습, 보고용 CV를 순서대로 수행한다.
+    실행 비용으로 예산을 조정할 수 있으나 테스트 성능은 판단에 사용하지 않는다.
     """
     declared, cfg = settings(config, quick=quick, physics_feature=physics_feature,
                              budget=budget, cv_repeats=cv_repeats, n_jobs=n_jobs,
                              gpr_max_rows=gpr_max_rows, hyd_model=hyd_model,blas_threads=blas_threads)
     # 원본 JSON과 CLI를 반영한 유효 설정을 구분해 기록함.
-    # 저장된 비용 계획을 재사용할 때는 데이터·설정·실행 모드가 같은지 먼저 확인함.
+    # 비용 계획을 재사용할 때는 데이터, 설정, 실행 모드가 같은지 먼저 확인
     accepted_plan=None
     if execution_plan is not None:
         if estimate_time or budget is not None or gpr_max_rows is not None:
@@ -271,14 +269,14 @@ def _development_impl(data, out, quick=False, learning=False, physics_feature=No
         estimate_models['hyd_ratio']={'gpr':(ratio_estimator(cfg['gpr_max_rows']),{})}
         estimate_targets['hyd_ratio']=df.iloc[train].dp_hyd_Pa.to_numpy()/df.iloc[train].dp_rigid_Pa.to_numpy()
     decision=accepted_plan['budget_decision'] if accepted_plan else {'applied_budget':cfg['budget'], 'reason':'Explicit CLI override' if budget is not None else 'Quick smoke settings' if quick else 'Configured fixed budget'}
-    # 후보 하나·fold 하나의 실측 시간으로 비용을 추정함.
-    # 예산과 GPR 행 수는 사전 비용 규칙으로 정하며, 검증·테스트 정확도로 바꾸지 않음.
+    # 후보 하나와 fold 하나의 실측 시간으로 비용을 추정
+    # 예산과 GPR 행 수는 사전 비용 규칙으로 정하고 검증이나 테스트 정확도로 바꾸지 않음
     if accepted_plan is None and (estimate_time or (declared.get('budget_rule') and not quick and budget is None)):
         estimate=estimate_runtime(estimate_models,X,estimate_targets,folds,cfg,learning=learning,labels=labels)
         if declared.get('budget_rule') and budget is None and not quick:
             rule=declared['budget_rule']
             decision=budget_decision(estimate,rule)
-            # 메모리·시간 때문에 GPR 행 수를 줄이면 GPR만 다시 측정함.
+            # 메모리와 시간 때문에 GPR 행 수를 줄이면 GPR만 다시 측정
             # 다른 모델은 기존 측정값을 새 병렬 수에 맞춰 재계산해 불필요한 학습을 피함.
             if decision.get('reduced_estimate_required'):
                 reduced_cfg={**cfg,'gpr_max_rows':rule['fallback_gpr_rows']}
@@ -303,13 +301,13 @@ def _development_impl(data, out, quick=False, learning=False, physics_feature=No
             estimate.attrs['effective_config']=cfg
             return estimate
     # 시간 추정은 위에서 반환되므로 아래부터 실제 개발 산출물을 저장
-    # audit는 전체 자료의 물리 일관성을 확인하며, 이후 모델 학습·선정에는 개발 행만 사용
+    # audit로 전체 자료의 물리 관계를 확인하되 모델 학습과 선정에는 개발 행만 사용
     out.mkdir(parents=True, exist_ok=True)
     audit(df, out)
     split = pd.DataFrame({'case_id': df.case_id, 'split': np.where(np.isin(np.arange(len(df)), test), 'test', 'development')})
     split.to_csv(out/'split.csv', index=False)
     np.savez(out/'cv_indices.npz', **{f'{i}_{part}': arr for i, pair in enumerate(folds) for part, arr in zip(['train', 'val'], pair)})
-    # 데이터 해시, 원본·유효 설정, 실제 후보 수, 환경을 남겨 실행 조건을 추적할 수 있게 함.
+    # 실행 조건을 확인할 수 있도록 데이터 해시, 원본과 유효 설정, 실제 후보 수, 환경을 기록
     manifest = {'seed': SEED, 'data_sha256': hashlib.sha256(Path(data).read_bytes()).hexdigest(),
         'config': declared, 'effective_config': cfg, 'budget_decision': decision,
         'execution_revision':declared.get('execution_revision'), 'resource_plans':[],
@@ -363,13 +361,13 @@ def _development_impl(data, out, quick=False, learning=False, physics_feature=No
         for name, (est, space) in models_by_target[target].items():
             print(f"{'Evaluating fixed formula' if name == 'physics_baseline' else 'Tuning'} {target}: {name}", flush=True)
             # full10k에서 GPR은 커널 3종×alpha 2종의 6후보를 전수 탐색함.
-            # Ridge·RF·MLP는 선택된 budget만큼 비교하고, 실제 후보 수를 그대로 기록함.
+            # Ridge, RF, MLP는 선택된 budget만큼 비교하고 실제 후보 수를 기록
             sampled = candidate_parameters(name,space,cfg['budget'],cfg['exhaustive_gpr'])
             plan=resource_plan(cfg,max_tasks=len(sampled)*len(folds))
             manifest['resource_plans'].append({'target':target,'model':name,'stage':'search',**plan})
             grid = [{k: [v] for k, v in item.items()} for item in sampled]
             # 탐색 중 자동 refit을 끄고, worker 종료 후 상위 프로세스에서 한 번 학습함.
-            # 병렬 수와 사전 작업 수를 함께 제한해 예약한 메모리·CPU 한도를 지키도록 함.
+            # 메모리와 CPU 한도를 넘지 않도록 병렬 수와 사전 작업 수를 함께 제한
             search = GridSearchCV(est, grid, scoring=log_rmse_score, cv=folds, refit=False,
                                   n_jobs=plan['effective_jobs'], pre_dispatch=plan['effective_jobs'], error_score='raise')
             start = time.perf_counter()
@@ -399,7 +397,7 @@ def _development_impl(data, out, quick=False, learning=False, physics_feature=No
                 'evaluation_seconds': elapsed,'refit_seconds':refit_seconds,
                 'fit_rows': len(best.sample_indices_) if hasattr(best,'sample_indices_') else len(X),
                 'note': 'Fixed P0-2 formula; no tuning or learned parameters.' if name == 'physics_baseline' else ann_note if name=='ann_ref' else 'Development CV only.'}
-            # 선정 설정을 공통 fold에서 다시 평가해 지표·분산·학습시간을 보고함.
+            # 공통 fold에서 선정 설정을 다시 평가해 지표와 분산, 학습 시간을 기록
             # 튜닝에 사용한 개발 CV를 재사용하므로 독립적인 일반화 성능 추정은 아님.
             row_start = len(all_folds)
             if target=='dp_thermal_Pa': thermal_oof[name]=[]
@@ -483,8 +481,8 @@ def _development_impl(data, out, quick=False, learning=False, physics_feature=No
 def development(data,out,quick=False,learning=False,physics_feature=None,*,
                 config=None,budget=None,cv_repeats=None,n_jobs=None,gpr_max_rows=None,
                 estimate_time=False,hyd_model=None,ann_ref_config=None,blas_threads=None,execution_plan=None):
-    """상위 프로세스의 BLAS 스레드도 제한해 병렬 worker와의 CPU 중복 사용을 줄임.
-    실제 개발 절차는 _development_impl에서 수행함.
+    """상위 프로세스의 BLAS 스레드도 제한해 병렬 worker와의 CPU 중복 사용을 줄인다.
+    실제 개발 절차는 _development_impl에서 수행한다.
     """
     _,cfg=settings(config,quick=quick,physics_feature=physics_feature,budget=budget,
                    cv_repeats=cv_repeats,n_jobs=n_jobs,gpr_max_rows=gpr_max_rows,
@@ -498,7 +496,7 @@ def development(data,out,quick=False,learning=False,physics_feature=None,*,
 
 # 4. 선정 완료 후 최종 테스트 1회 평가
 def validate_finalize_config(manifest, config):
-    """개발 단계와 다른 설정으로 테스트를 평가하지 않도록 원본 설정을 대조함.
+    """개발 단계와 다른 설정으로 테스트를 평가하지 않도록 원본 설정을 대조한다.
     """
     if config is not None:
         declared, _ = settings(config)
@@ -507,8 +505,8 @@ def validate_finalize_config(manifest, config):
 
 
 def finalize(data, out, config=None):
-    """선정된 모델을 재학습하지 않고 고정 테스트셋에서 한 번만 평가함.
-    시작 기록이 있으면 실패·중단 여부와 관계없이 이 함수의 재실행을 막음.
+    """선정된 모델을 재학습하지 않고 고정 테스트셋에서 한 번만 평가한다.
+    시작 기록이 있으면 실패나 중단 여부와 관계없이 이 함수의 재실행을 막는다.
     """
     # 완료 파일뿐 아니라 시작 기록도 검사함. 중단된 평가를 반복해 테스트를 다시 보는 것을 막음.
     if (out/'final_test_metrics.csv').exists() or (out/'final_evaluation_started.json').exists():
@@ -581,7 +579,7 @@ def finalize(data, out, config=None):
 
 # 5. 명령줄 실행
 def main():
-    """개발 실행과 최종 평가를 명령으로 구분해 테스트 단계의 설정 변경을 막았음.
+    """개발 실행과 최종 평가를 명령으로 구분해 테스트 단계의 설정 변경을 막는다.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('stage', choices=['develop', 'finalize'])

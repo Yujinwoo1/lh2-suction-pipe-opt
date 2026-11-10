@@ -1,7 +1,9 @@
-"""열침입 Q_leak와 외경 D_o를 줄이면서 dp_design ≤ 48.3 kPa인 후보를 찾기 위한 탐색.
+"""열침입, 전체 압력, 외경을 줄이면서 dp_design ≤ 48.3 kPa인 후보를 찾는다.
 
-구현에서는 전체 압력도 목적에 포함해 세 목적을 최소화한다.
-기준·진공 열화·고부하 시나리오를 나눠 운전 조건에 따른 설계 차이를 비교함."""
+파이프라인 단계: 최적화
+입력: 선정 모델과 시나리오 설정을 읽는다. compare는 후보표와 솔버 결과도 읽는다.
+출력: 시나리오별 Pareto와 격자 비교, 재검증 후보, F4 그림 또는 솔버 오차표를 저장한다.
+"""
 import argparse
 import json
 from pathlib import Path
@@ -99,8 +101,8 @@ def normalize(values, ideal, nadir):
 
 
 def candidates(front):
-    """B는 Pareto 목적값을 0–1로 정규화한 뒤 이상점까지의 거리가 가장 가까운 점으로 정의함.
-    단위가 다른 세 목적을 같은 척도에서 비교하기 위한 기준임."""
+    """B는 Pareto 목적값을 0–1로 정규화한 뒤 이상점까지의 거리가 가장 가까운 점으로 정의한다.
+    단위가 다른 세 목적을 같은 척도에서 비교하기 위한 기준이다."""
     front = front.drop_duplicates(['D_mm', 't_ins_mm']).reset_index(drop=True)
     values = front[OBJECTIVES].to_numpy()
     scaled = normalize(values, values.min(axis=0), values.max(axis=0))

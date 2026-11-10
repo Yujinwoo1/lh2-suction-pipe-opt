@@ -1,6 +1,9 @@
-"""수력/강체 압력 비율은 약 1.74–1.85로 달라 1.8 고정값과 GPR 보정을 비교함.
+"""수력 압력과 강체 압력의 비율은 약 1.74–1.85로 달라 1.8 고정값과 GPR 보정을 비교한다.
 
-제약 경계에서는 이 차이가 안전 판정에 영향을 주므로 개발 자료로 비율을 학습함."""
+파이프라인 단계: 수력 보정
+입력: 제약 경계의 판정 차이를 확인하려고 개발 자료와 같은 fold의 열적 압력 예측을 받는다.
+출력: 비율 모델과 부분표본 ID, 개발 CV 예측 및 압력 비교표를 저장한다.
+"""
 import argparse
 import hashlib
 import json
@@ -79,8 +82,8 @@ def hydraulic_fold(model,X,target,a,b,thermal_values,thermal_estimator,thermal_p
 
 def hydraulic_cv(dev,features,folds,thermal_estimator,rigid,out,max_rows=3000,
                  thermal_oof=None,warning_records=None,n_jobs=1,blas_threads=None):
-    """수력 보정의 차이만 비교하도록 같은 개발 fold의 열적 압력 예측을 사용하고,
-    테스트셋은 보정 모델 학습이나 비교에 사용하지 않는다"""
+    """수력 보정의 차이만 비교하도록 같은 개발 fold의 열적 압력 예측을 사용한다.
+    테스트셋은 보정 모델 학습이나 비교에 사용하지 않는다."""
     warning_records=[] if warning_records is None else warning_records
     X=dev[features]; target=dev.dp_hyd_Pa.to_numpy()/dev.dp_rigid_Pa.to_numpy()
     model=ratio_estimator(max_rows)

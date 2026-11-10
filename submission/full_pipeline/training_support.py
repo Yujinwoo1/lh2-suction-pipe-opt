@@ -1,6 +1,9 @@
-"""모델 간 비교를 위해 튜닝 후보 수와 학습 부분표본 기준을 맞췄다.
+"""모델 비교에 사용할 튜닝 후보 수와 학습 부분표본 기준을 정한다.
 
-다항 Ridge·RF·MLP는 출력별 50후보로 비교함. GPR은 계산 비용 때문에 6후보를 전수 탐색했다."""
+파이프라인 단계: 모델 학습과 비교
+입력: 설정 파일과 CLI 옵션, 후보 범위, 학습 자료와 시간 추정값을 받는다.
+출력: 유효 설정과 seed 2026 부분표본, 튜닝 후보 및 비용 기준의 예산을 반환한다.
+"""
 import json
 from pathlib import Path
 
@@ -70,8 +73,8 @@ def sample_indices(n_rows, max_rows):
 
 
 class SubsampledTargetRegressor(TransformedTargetRegressor):
-    """GPR은 계산량이 O(n³)으로 늘어 전처리 전에 학습 자료만 부분 추출함.
-    검증 자료는 줄이지 않으며, 다른 모델은 전체 학습 자료를 사용함.
+    """GPR은 계산량이 O(n³)으로 늘어 전처리 전에 학습 자료만 부분 추출한다.
+    검증 자료는 줄이지 않으며, 다른 모델은 전체 학습 자료를 사용한다.
     """
     def __init__(self, regressor=None, *, transformer=None, func=None,
                  inverse_func=None, check_inverse=True, max_rows=3000):
@@ -89,7 +92,7 @@ class SubsampledTargetRegressor(TransformedTargetRegressor):
 
 def sampled_parameters(space, budget):
     """모델별 탐색 기회가 달라지지 않도록 요청한 수만큼 서로 다른 후보를 뽑는다.
-    후보가 부족하면 미리 정한 범위 안에서 추출하고 실제 후보 수를 기록함.
+    후보가 부족하면 미리 정한 범위 안에서 추출하고 실제 후보 수를 기록한다.
     """
     if not space:
         return [{}]
@@ -106,7 +109,7 @@ def sampled_parameters(space, budget):
         else:
             raise ValueError('Requested budget exceeds the available unique candidates.')
     samples = list(ParameterSampler(distribution, n_iter=budget, random_state=SEED))
-    # 중복 설정을 별도 후보로 세지 않도록 같은 seed로 보충한다.
+    # 중복 설정을 별도 후보로 세지 않도록 같은 seed로 후보를 보충
     unique = {}
     for item in samples:
         unique.setdefault(repr(sorted(item.items())), item)
@@ -121,7 +124,7 @@ def sampled_parameters(space, budget):
 
 
 def budget_decision(estimates, rule):
-    """실행 시간에 따라 임의로 예산을 바꾸지 않도록 사전에 정한 기준을 사용함."""
+    """실행 시간에 따라 임의로 예산을 바꾸지 않도록 사전에 정한 기준을 사용한다."""
     if rule.get('mode')=='wall_clock':
         from execution_plan import walltime_decision
         return walltime_decision(estimates,rule)

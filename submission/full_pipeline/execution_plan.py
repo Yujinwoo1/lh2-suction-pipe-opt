@@ -1,4 +1,9 @@
-"""메모리/CPU 한도를 넘지 않도록 사전에 정한 비용 기준으로 병렬 수를 제한함."""
+"""메모리와 CPU 한도를 넘지 않도록 사전에 정한 비용 기준으로 병렬 수를 제한한다.
+
+파이프라인 단계: 실행 관리
+입력: 실행 설정과 가용 자원, 모델별 실측 시간을 받는다.
+출력: 병렬 수와 예상 실행 시간, 비용 기준에 따른 튜닝 예산을 반환한다.
+full10k_runner.py, plan_walltime.py, lh2_pipeline.py가 이 파일의 자원 계획 함수를 호출한다."""
 import math
 import os
 from pathlib import Path
@@ -88,8 +93,8 @@ def walltime_decision(estimates,rule,reduced_estimates=None):
 
 
 def release_workers(jobs):
-    """대기 중인 worker도 메모리를 잡고 있어 refit 전에 종료함.
-    남은 worker 메모리와 새 GPR 학습 메모리가 겹치는 것을 막기 위함.
+    """대기 중인 worker도 메모리를 잡고 있어 refit 전에 종료한다.
+    남은 worker 메모리와 새 GPR 학습 메모리가 겹치는 것을 막기 위해서다.
     """
     if jobs>1:
         from joblib.externals.loky import get_reusable_executor
@@ -101,7 +106,7 @@ def release_workers(jobs):
 
 
 def reschedule_estimates(estimates,cfg,snapshot=None):
-    """부분표본 크기로 병렬 수가 달라지면 기존 실측 시간을 새 실행 순서에 맞춰 계산함."""
+    """부분표본 크기로 병렬 수가 달라지면 기존 실측 시간을 새 실행 순서에 맞춰 계산한다."""
     if estimates.empty:return estimates.copy()
     rows=[]
     for row in estimates.to_dict('records'):

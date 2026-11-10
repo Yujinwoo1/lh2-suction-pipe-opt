@@ -1,4 +1,9 @@
-"""정답 없는 입력은 합성 응답의 비용 측정에만 사용함. 모델,합성 정답은 저장하지 않음."""
+"""정답 없는 입력으로 합성 응답을 만들어 GPR의 시간과 메모리를 측정한다.
+
+파이프라인 단계: 보조 도구
+입력: 입력 CSV와 configs/full10k.json을 읽는다.
+출력: 커널별 측정값과 개발 실행 시간 추정표를 저장한다. 모델과 합성 정답은 저장하지 않는다.
+최종 결과에는 쓰이지 않는 보조 도구이다."""
 import argparse
 import hashlib
 import json
@@ -56,14 +61,14 @@ def worker(path, kernel_index, threads):
 
 
 def workload_table(measured, others, n_rows, cfg):
-    """직렬 실행을 가정한 비용 추정이며 실제 합본의 학습시간은 아님."""
+    """직렬 실행을 가정한 비용 추정이며 실제 합본의 학습 시간은 아니다."""
     rows=[]
     validation_rows = n_rows*(1-cfg['test_size'])/cfg['cv_splits']
     # 커널별 수렴 시간이 달라 평균과 범위를 함께 남김.
     for budget in [6,20,50]:
         per_kernel=[]
         for row in measured:
-            # 출력별 탐색·보고 CV·refit·예측 측정을 포함해 비용 누락을 줄임.
+            # 비용이 빠지지 않도록 출력별 탐색, 보고용 CV, refit과 예측 측정을 포함
             fit_count=2*(budget*15+15+1)
             predict_seconds=2*((budget*15+15)*validation_rows/100000+.3)*row['predict_100k_seconds']
             per_kernel.append(fit_count*row['fit_seconds']+predict_seconds)
