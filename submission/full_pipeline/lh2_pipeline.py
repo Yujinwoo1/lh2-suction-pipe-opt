@@ -1,8 +1,13 @@
-"""LH2 흡입배관의 대리모델을 비교하고 선정한 뒤 최종 평가를 수행한다.
+"""
 
-파이프라인 단계: 모델 학습과 비교
-입력: 정답이 있는 솔버 CSV와 실행 설정을 읽는다. finalize는 저장된 모델과 분할도 읽는다.
-출력: develop은 모델과 개발 비교표를, finalize는 고정 테스트셋의 1회 평가 결과를 저장한다.
+LH2 흡입배관의 대리모델 비교/선정과 최종 평가를 담당하는 실행 코드.
+
+develop에서는 개발 자료로 후보 비교, 학습 곡선, 수력 보정을 준비함.
+1만 개 자료의 기본 분할은 개발 8,000개 / 테스트 2,000개이며,
+기화 라벨 비율을 유지하도록 층화하고 무작위 seed는 2026으로 고정함.
+
+입력: 정답이 있는 솔버 CSV와 실행 설정을 읽는다. finalize는 저장된 모델과 분할도 읽음.
+출력: develop은 모델과 개발 비교표를, finalize는 고정 테스트셋의 1회 평가 결과를 저장
 """
 from __future__ import annotations
 
@@ -60,22 +65,22 @@ BOUNDS = {'D_mm': (12, 50), 't_ins_mm': (2, 25), 'f_Hz': (2, 10),
 
 
 def save_json(path, value):
-    """실행 설정과 감사 기록을 사람이 읽을 수 있는 JSON으로 남긴다.
+    """인수인계 및 디버깅을 위해 실행 설정과 감사 기록을 사람이 읽을 수 있는 JSON으로 남기는 식으로 저장
     """
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2, default=str), encoding='utf-8')
 
 
 def rigid_pressure(df):
-    """AI 오차와 수력 근사 오차를 구분하려고 강체 압력은 식으로 계산한다.
-    최적화와 새 입력 예측에서도 같은 식을 재사용한다.
+    """AI 오차와 수력 근사 오차를 구분하려고 강체 압력은 식으로 계산하욨음
+    최적화와 새 입력 예측에서도 같은 식을 재사용
     """
     # 식의 단위를 맞추려고 내경은 mm에서 m로, 유량은 kg/h에서 kg/s로 환산
     area = np.pi * (df.D_mm.to_numpy() / 1000)**2 / 4
     return df.L_m.to_numpy() * (np.pi * df.mdot_kg_h.to_numpy() / 3600) * (2*np.pi*df.f_Hz.to_numpy()) / area
 
 def load_data(path):
-    """단위와 중복, 물리 관계를 먼저 검사해 잘못된 자료가 학습에 들어가는 것을 막는다.
-    정답 없는 입력 목록은 거부하고, status가 있으면 수렴한 행만 사용한다.
+    """단위와 중복, 물리 관계를 먼저 검사해 잘못된 자료가 학습에 들어가는 것을 막음
+    정답 없는 입력 목록은 거부하고, status가 있으면 수렴한 행만 사용
     """
     df = pd.read_csv(path)
     required = ['case_id', *BOUNDS, *TARGETS, 'dp_hyd_Pa', 'dp_design_Pa', 'dp_rigid_Pa', 'D_o_mm', 'vaporized']
@@ -122,7 +127,7 @@ def load_data(path):
 
 
 def audit(df, out):
-    """실제 열적 압력을 넣어 수력 계수 1.8 자체에서 생기는 오차를 따로 확인한다.
+    """실제 열적 압력을 넣어 수력 계수 1.8 자체에서 생기는 오차를 따로 확인함
     전체 자료의 물리 관계를 확인하는 검사이며, 이 수치로 모델을 선정하지 않는다.
     """
     p = df.dp_thermal_Pa.to_numpy() + 1.8*rigid_pressure(df)
@@ -146,8 +151,8 @@ def audit(df, out):
 
 # 2. 비교 모델과 평가 기준
 def candidates(quick=False, target=None, physics_feature=False):
-    """모든 모델이 같은 입력과 출력 변환으로 비교되도록 Pipeline으로 묶는다.
-    스케일러와 다항 변환은 CV의 학습 fold에서만 fit해 정보 누출을 막는다.
+    """모든 모델이 같은 입력과 출력 변환으로 비교되도록 Pipeline으로 묶어보았음
+    스케일러와 다항 변환은 CV의 학습 fold에서만 fit해 정보 누출을 막는다
     """
     # 물리 특성도 Pipeline 안에서 원본 입력으로 계산함. 정답을 파생 입력으로 쓰지 않음.
     # 같은 지표로 비교하려고 log10으로 학습한 출력을 예측할 때 원단위로 복원
@@ -201,7 +206,7 @@ def log_rmse_score(estimator, X, y):
 
 
 def metrics(y, pred):
-    """원단위 오차와 log10 공간 오차를 함께 남겨 한 지표만으로 해석하지 않도록 한다.
+    """원단위 오차와 log10 공간 오차를 함께 남겨 한 지표만으로 해석하지 않도록 하였음
     MAPE는 백분율이며 RMSE의 단위는 각 출력의 원단위와 같다.
     """
     return {'r2': r2_score(y, pred), 'rmse': np.sqrt(mean_squared_error(y, pred)),
@@ -214,7 +219,7 @@ def metrics(y, pred):
 def _development_impl(data, out, quick=False, learning=False, physics_feature=None, *,
                 config=None, budget=None, cv_repeats=None, n_jobs=None,
                 gpr_max_rows=None, estimate_time=False, hyd_model=None, ann_ref_config=None,blas_threads=None,execution_plan=None):
-    """고정 개발 분할에서 튜닝, 최종 개발 학습, 보고용 CV를 순서대로 수행한다.
+    """고정 개발 분할에서 튜닝, 최종 개발 학습, 보고용 CV를 순서대로 수행함
     실행 비용으로 예산을 조정할 수 있으나 테스트 성능은 판단에 사용하지 않는다.
     """
     declared, cfg = settings(config, quick=quick, physics_feature=physics_feature,
@@ -398,7 +403,7 @@ def _development_impl(data, out, quick=False, learning=False, physics_feature=No
                 'fit_rows': len(best.sample_indices_) if hasattr(best,'sample_indices_') else len(X),
                 'note': 'Fixed P0-2 formula; no tuning or learned parameters.' if name == 'physics_baseline' else ann_note if name=='ann_ref' else 'Development CV only.'}
             # 공통 fold에서 선정 설정을 다시 평가해 지표와 분산, 학습 시간을 기록
-            # 튜닝에 사용한 개발 CV를 재사용하므로 독립적인 일반화 성능 추정은 아님.
+            # 튜닝에 사용한 개발 CV를 재사용하므로 독립적인 일반화 성능 추정은 아님
             row_start = len(all_folds)
             if target=='dp_thermal_Pa': thermal_oof[name]=[]
             report_plan=resource_plan(cfg,max_tasks=len(folds))
@@ -416,7 +421,7 @@ def _development_impl(data, out, quick=False, learning=False, physics_feature=No
                     'fit_seconds':validation['fit_seconds'],**metrics(y[b],pred)})
             group = pd.DataFrame(all_folds[row_start:])
             # 예측 속도는 개발 입력을 반복해 1만 행으로 측정함. 새 정답을 만드는 과정은 아님.
-            # 준비 호출 후 3회 측정의 중앙값을 남겨 첫 호출 비용의 영향을 줄임.
+            # 준비 호출 후 3회 측정의 중앙값을 남겨 첫 호출 비용의 영향을 줄임
             timing_X = pd.concat([X]*int(np.ceil(10000/len(X))), ignore_index=True).iloc[:10000]
             best.predict(timing_X.iloc[:5])
             timing = []
@@ -579,7 +584,7 @@ def finalize(data, out, config=None):
 
 # 5. 명령줄 실행
 def main():
-    """개발 실행과 최종 평가를 명령으로 구분해 테스트 단계의 설정 변경을 막는다.
+    """개발 실행과 최종 평가를 명령으로 구분해 테스트 단계의 설정 변경을 막게 된다. 
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('stage', choices=['develop', 'finalize'])
